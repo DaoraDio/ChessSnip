@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.venv/
+venv/
+
+# PyInstaller output and work files
+build/
+dist/
+*.spec.bak
+
+# Local logs and user settings
+*.log
+settings.json
