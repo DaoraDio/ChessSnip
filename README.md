@@ -71,4 +71,4 @@ PyInstaller writes generated files under build/ and dist/. The single-file build
 
 ## License
 
-No license has been selected for ChessSnip's own source code yet. The third-party model and algorithm notices are in THIRD_PARTY_NOTICES.txt. Add a project license before inviting others to reuse or redistribute the application.
+ChessSnip is licensed under the MIT License. See [LICENSE](LICENSE) for the full license text. Third-party model and algorithm notices are in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
