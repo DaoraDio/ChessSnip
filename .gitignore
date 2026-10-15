@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *.pyd
+!release/ChessSnip-FastStart/_internal/*.pyd
+!release/ChessSnip-FastStart/_internal/**/*.pyd
 .venv/
 venv/
 
