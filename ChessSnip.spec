@@ -1,24 +1,46 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_dynamic_libs
 
 PROJECT = Path(SPECPATH)
 binaries = collect_dynamic_libs("onnxruntime")
+import winrt
+winrt_dir = Path(next(iter(winrt.__path__)))
+# The WinRT wheel ships an older MSVC runtime. Keep the app-level runtime
+# collected with ONNX Runtime shared, so ONNX cannot bind to the stale copy.
+winrt_binaries = [
+    item for item in collect_dynamic_libs("winrt")
+    if Path(item[0]).name.casefold() != "msvcp140.dll"
+] + [
+    (str(path), "winrt") for path in winrt_dir.glob("_winrt*.pyd")
+]
+winrt_datas = [
+    item for item in collect_data_files("winrt", include_py_files=True)
+    if not item[0].lower().endswith(".dll")
+]
+qr_datas, qr_binaries, qr_hiddenimports = collect_all("zxingcpp")
+lichess_image_datas = [
+    (str(path), "assets/lichess")
+    for path in (PROJECT / "assets" / "lichess").glob("*.png")
+]
 
 a = Analysis(
     [str(PROJECT / "ChessSnip.pyw")],
     pathex=[str(PROJECT)],
-    binaries=binaries,
+    binaries=binaries + winrt_binaries + qr_binaries,
     datas=[
         (str(PROJECT / "chess_position_classifier.onnx"), "."),
         (str(PROJECT / "THIRD_PARTY_NOTICES.txt"), "."),
+        (str(PROJECT / "PyWinRT_LICENSE.txt"), "."),
+        (str(PROJECT / "ZXing_CPP_LICENSE.txt"), "."),
         (str(PROJECT / "ChessSnip.png"), "."),
-    ],
-    hiddenimports=["chess_recognition", "onnxruntime.capi._pybind_state"],
+    ] + lichess_image_datas + qr_datas + winrt_datas,
+    hiddenimports=["chess_recognition", "onnxruntime.capi._pybind_state"] + qr_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # Keep the large optional OCR engine out of the compact single-file build.
+    excludes=["rapidocr"],
     noarchive=False,
     optimize=0,
 )

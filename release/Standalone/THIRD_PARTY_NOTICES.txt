@@ -1,6 +1,18 @@
 Third-party software and model notices
 ======================================
 
+Offline OCR and QR reading
+--------------------------
+Text extraction uses Windows.Media.Ocr, the on-device OCR API included with
+Windows. OCR uses the language resources installed for the current Windows
+user; ChessSnip does not bundle OCR models or upload snips.
+
+The Python projection for the Windows Runtime APIs is PyWinRT, distributed
+under the MIT License in PyWinRT_LICENSE.txt.
+
+The QR reader uses zxing-cpp, distributed under Apache License 2.0. Its
+license is included in ZXing_CPP_LICENSE.txt.
+
 chessimg2pos
 ------------
 The bundled chess-piece classifier is based on the pretrained model and model

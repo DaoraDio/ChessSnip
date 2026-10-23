@@ -1,12 +1,12 @@
-ChessSnip — Fast Start
-=====================
+ChessSnip FastStart
 
-This build starts quickly by loading its runtime files in place instead of
-extracting them at each launch. It works without Python installed.
+Run ChessSnip.exe from this folder. Keep the _internal folder beside it and
+distribute the complete folder together. Python does not need to be installed.
 
-Run ChessSnip.exe from this folder. Keep the _internal folder beside it, and
-copy or move the whole ChessSnip-FastStart folder when sharing the app.
+Text recognition uses the OCR language resources installed in Windows. Add a
+language in Windows Settings if OCR reports that no language is available.
+QR and chess recognition run locally. The chess model is included.
 
-The single-file standalone build is in the ChessSnip-Release folder.
-
-To open directly in capture mode, start ChessSnip.exe with --snip.
+To open directly in capture mode, start ChessSnip.exe --snip.
+Keep THIRD_PARTY_NOTICES.txt, PyWinRT_LICENSE.txt, and ZXing_CPP_LICENSE.txt
+with redistributed copies.

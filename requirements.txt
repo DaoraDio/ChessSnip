@@ -1,3 +1,11 @@
 Pillow
 numpy
 onnxruntime
+zxing-cpp>=3,<4
+winrt-Windows.Media.Ocr>=3.2,<4
+winrt-Windows.Graphics.Imaging>=3.2,<4
+winrt-Windows.Storage.Streams>=3.2,<4
+winrt-Windows.Foundation>=3.2,<4
+winrt-Windows.Foundation.Collections>=3.2,<4
+winrt-Windows.Globalization>=3.2,<4
+rapidocr>=3.10,<4

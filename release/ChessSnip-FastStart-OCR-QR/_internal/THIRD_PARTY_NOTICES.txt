@@ -1,0 +1,64 @@
+Third-party software and model notices
+======================================
+
+Offline OCR and QR reading
+--------------------------
+The FastStart distribution and source installation use RapidOCR for offline
+text detection and recognition. Its PP-OCRv6 model artifacts are covered by
+RapidOCR_MODEL_LICENSES.md. RapidOCR source code is licensed under Apache
+License 2.0; the license text is included in Apache-2.0-LICENSE.txt.
+
+The single-file distribution uses Windows.Media.Ocr, the on-device OCR API
+included with Windows. ChessSnip does not upload snips for recognition.
+
+The Python projection for the Windows Runtime APIs is PyWinRT, distributed
+under the MIT License in PyWinRT_LICENSE.txt.
+
+The QR reader uses zxing-cpp, distributed under Apache License 2.0. Its
+license is included in ZXing_CPP_LICENSE.txt.
+
+chessimg2pos
+------------
+The bundled chess-piece classifier is based on the pretrained model and model
+architecture from chessimg2pos by Marcodicio. The original PyTorch model was
+converted to ONNX for ChessSnip's compact, CPU-only local inference runtime.
+The piece classifier architecture and weights are licensed under the MIT
+License. Project: https://github.com/mdicio/chessimg2pos
+
+Chessboard finder
+-----------------
+ChessSnip's screen-board detector is adapted from the chessboard_finder.py
+algorithm in chessimg2pos by Marcodicio. It uses NumPy and Pillow and was
+adjusted to return screen-image board bounds and handle current NumPy versions.
+
+MIT License
+-----------
+Copyright (c) 2025 Marcodicio
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Lichess logo
+------------
+The Lichess logo artwork in assets/lichess/ is by sadsnake1. It is used only
+on the button that opens lichess.org, consistent with the Lichess project's
+logo-use exception. Source and usage terms:
+https://lichess1.org/assets/logo/lichess-pad12.svg
+https://github.com/lichess-org/lila/blob/master/COPYING.md
+
+

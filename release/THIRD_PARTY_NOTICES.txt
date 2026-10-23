@@ -1,6 +1,15 @@
 Third-party software and model notices
 ======================================
 
+Offline OCR and QR reading
+--------------------------
+RapidOCR and its included OCR models are distributed under Apache License
+2.0. Their code license is in Apache-2.0-LICENSE.txt; model provenance and
+redistribution terms are in RapidOCR_MODEL_LICENSES.md.
+
+The QR reader uses zxing-cpp, distributed under Apache License 2.0. Its
+license is included in ZXing_CPP_LICENSE.txt.
+
 chessimg2pos
 ------------
 The bundled chess-piece classifier is based on the pretrained model and model

@@ -11,7 +11,29 @@ venv/
 build/
 dist/
 *.spec.bak
+/release/ChessSnip-FastStart/ChessSnip/
 
 # Local logs and user settings
 *.log
 settings.json
+
+# Stale files from an earlier RapidOCR release build (the current builds use Windows OCR).
+Apache-2.0-LICENSE.txt
+RapidOCR_MODEL_LICENSES.md
+release/Standalone/Apache-2.0-LICENSE.txt
+release/Standalone/RapidOCR_MODEL_LICENSES.md
+release/ChessSnip-FastStart/Apache-2.0-LICENSE.txt
+release/ChessSnip-FastStart/RapidOCR_MODEL_LICENSES.md
+release/ChessSnip-FastStart/_internal/Apache-2.0-LICENSE.txt
+release/ChessSnip-FastStart/_internal/RapidOCR_MODEL_LICENSES.md
+release/ChessSnip-FastStart/_internal/rapidocr/
+release/ChessSnip-FastStart/_internal/rapidocr-3.10.0.dist-info/
+release/ChessSnip-FastStart/_internal/cv2/
+release/ChessSnip-FastStart/_internal/pyclipper/
+release/ChessSnip-FastStart/_internal/shapely/
+release/ChessSnip-FastStart/_internal/Shapely.libs/
+release/ChessSnip-FastStart/_internal/yaml/
+release/ChessSnip-FastStart/_internal/tqdm-4.70.1.dist-info/
+release/ChessSnip-FastStart/_internal/python3.dll
+!release/ChessSnip-FastStart-OCR-QR/_internal/*.pyd
+!release/ChessSnip-FastStart-OCR-QR/_internal/**/*.pyd
