@@ -30,7 +30,6 @@ a = Analysis(
     datas=[
         (str(PROJECT / "chess_position_classifier.onnx"), "."),
         (str(PROJECT / "THIRD_PARTY_NOTICES.txt"), "."),
-        (str(PROJECT / "Apache-2.0-LICENSE.txt"), "."),
         (str(PROJECT / "PyWinRT_LICENSE.txt"), "."),
         (str(PROJECT / "ZXing_CPP_LICENSE.txt"), "."),
         (str(PROJECT / "ChessSnip.png"), "."),
@@ -39,9 +38,16 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # OCR uses Windows.Media.Ocr; keep any locally installed RapidOCR package out.
+    excludes=["rapidocr"],
     noarchive=False,
     optimize=0,
+)
+# PyInstaller's dependency scan can re-add the WinRT wheel's older MSVC runtime.
+from PyInstaller.building.datastruct import TOC
+a.binaries = TOC(
+    entry for entry in a.binaries
+    if entry[0].replace('\\', '/').casefold() != 'winrt/msvcp140.dll'
 )
 pyz = PYZ(a.pure)
 

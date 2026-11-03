@@ -131,7 +131,7 @@ def _enable_crash_logging():
 _enable_crash_logging()
 
 try:
-    from PIL import Image, ImageChops, ImageDraw, ImageOps, ImageTk
+    from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps, ImageTk
 except ImportError:
     root = tk.Tk(); root.withdraw()
     messagebox.showerror("ChessSnip", "ChessSnip needs Pillow. Install it with:\n\npy -m pip install Pillow")
@@ -233,7 +233,7 @@ class ChessSnipTooltip:
             tk.Label(
                 tip, text=self.text, bg=PANEL2, fg=TEXT, font=("Segoe UI", 9),
                 padx=8, pady=5, relief="flat", bd=0, highlightthickness=1,
-                highlightbackground=ACCENT,
+                highlightbackground=EDGE,
             ).pack()
             tip.update_idletasks()
             x = self.widget.winfo_rootx() + max(0, (self.widget.winfo_width() - tip.winfo_width()) // 2)
@@ -301,9 +301,10 @@ class ModernSlider(tk.Canvas):
         self.gradient_hue = float(gradient_hue) % 1.0
         self.gradient_saturation = max(0.0, min(1.0, float(gradient_saturation)))
         self.gradient_value = max(0.0, min(1.0, float(gradient_value)))
-        self._hue_gradient_photo = None
-        self._hue_gradient_item = None
-        self._hue_gradient_size = None
+        self._slider_photo = None
+        self._gradient_bitmap = None
+        self._gradient_size = None
+        self._slider_scale = 4
         self.length = length
         self._dragging = False
         super().__init__(
@@ -359,12 +360,17 @@ class ModernSlider(tk.Canvas):
             if not self.winfo_exists():
                 return
             self.delete("slider-art")
+            width = max(self.length, self.winfo_width())
+            height = max(26, self.winfo_height())
+            scale = self._slider_scale
+            image = Image.new("RGBA", (width * scale, height * scale), self._tk_color(self.cget("bg")))
+            draw = ImageDraw.Draw(image)
             left, right = self._track_bounds()
-            center_y = max(13, self.winfo_height() // 2)
+            center_y = height // 2
             value_x = self._value_x(self.variable.get())
             if self.hue_gradient or self.saturation_gradient or self.brightness_gradient:
-                gradient_width = max(1, round(right - left) + 1)
-                gradient_height = 6
+                gradient_width = max(1, round((right - left) * scale) + 1)
+                gradient_height = 6 * scale
                 hue = round(self.gradient_hue, 4) if (self.saturation_gradient or self.brightness_gradient) else None
                 saturation = round(self.gradient_saturation, 4) if self.brightness_gradient else None
                 value = round(self.gradient_value, 4) if self.saturation_gradient else None
@@ -372,9 +378,7 @@ class ModernSlider(tk.Canvas):
                     gradient_width, gradient_height, self.hue_gradient,
                     self.saturation_gradient, self.brightness_gradient, hue, saturation, value,
                 )
-                if self._hue_gradient_size != gradient_size:
-                    if self._hue_gradient_item is not None:
-                        self.delete(self._hue_gradient_item)
+                if self._gradient_size != gradient_size:
                     gradient = Image.new("RGBA", (gradient_width, gradient_height), (0, 0, 0, 0))
                     pixels = gradient.load()
                     for px in range(gradient_width):
@@ -395,27 +399,45 @@ class ModernSlider(tk.Canvas):
                         radius=gradient_height // 2, fill=255,
                     )
                     gradient.putalpha(mask)
-                    self._hue_gradient_photo = ImageTk.PhotoImage(gradient, master=self)
-                    self._hue_gradient_size = gradient_size
-                    self._hue_gradient_item = self.create_image(
-                        left, center_y, image=self._hue_gradient_photo,
-                        anchor="w", tags="hue-gradient",
-                    )
-                else:
-                    self.coords(self._hue_gradient_item, left, center_y)
+                    self._gradient_bitmap = gradient
+                    self._gradient_size = gradient_size
+                image.alpha_composite(
+                    self._gradient_bitmap,
+                    (round(left * scale), round(center_y * scale - gradient_height / 2)),
+                )
             else:
-                self.create_line(left, center_y, right, center_y, fill=PANEL2, width=5, capstyle=tk.ROUND, tags="slider-art")
-                self.create_line(left, center_y, value_x, center_y, fill=ACCENT, width=5, capstyle=tk.ROUND, tags="slider-art")
+                track_box = (
+                    round(left * scale), round((center_y - 2.5) * scale),
+                    round(right * scale), round((center_y + 2.5) * scale),
+                )
+                draw.rounded_rectangle(track_box, radius=3 * scale, fill=PANEL2)
+                if value_x > left:
+                    active_box = (
+                        track_box[0], track_box[1], round(value_x * scale), track_box[3],
+                    )
+                    draw.rounded_rectangle(active_box, radius=3 * scale, fill=ACCENT)
             for tick in self.ticks:
                 tick_x = self._value_x(tick)
-                self.create_line(tick_x, center_y - 5, tick_x, center_y + 5, fill=MUTED, width=1, tags="slider-art")
-            radius = 7
-            self.create_oval(
-                value_x - radius, center_y - radius, value_x + radius, center_y + radius,
-                fill=self.cget("bg"), outline=ACCENT, width=2, tags="slider-art",
+                draw.line(
+                    (round(tick_x * scale), round((center_y - 5) * scale),
+                     round(tick_x * scale), round((center_y + 5) * scale)),
+                    fill=MUTED, width=scale,
+                )
+            radius = 7 * scale
+            draw.ellipse(
+                (round(value_x * scale) - radius, center_y * scale - radius,
+                 round(value_x * scale) + radius, center_y * scale + radius),
+                fill=self._tk_color(self.cget("bg")), outline=ACCENT, width=2 * scale,
             )
+            rendered = image.resize((width, height), Image.Resampling.LANCZOS)
+            self._slider_photo = ImageTk.PhotoImage(rendered, master=self)
+            self.create_image(0, 0, image=self._slider_photo, anchor="nw", tags="slider-art")
         except (tk.TclError, ValueError, TypeError):
             pass
+
+    def _tk_color(self, color):
+        red, green, blue = self.winfo_rgb(color)
+        return (red >> 8, green >> 8, blue >> 8, 255)
 
     def _variable_changed(self, *_args):
         self._redraw()
@@ -684,6 +706,9 @@ class ChessSnip:
         self.theme_name = _load_saved_theme()
         _activate_palette(self.theme_name)
         self.root = tk.Tk()
+        self._launch_direct_capture = "--snip" in sys.argv[1:]
+        if self._launch_direct_capture:
+            self.root.withdraw()
         self.root.bind_class("Button", "<Enter>", self._button_hover_enter, add="+")
         self.root.bind_class("Button", "<Leave>", self._button_hover_leave, add="+")
         self.root.report_callback_exception = self._report_callback_exception
@@ -704,12 +729,18 @@ class ChessSnip:
         self.fit_scale = 1.0
         self.display_origin = (0, 0)
         self.strokes: list[dict] = []
+        self._selected_shape = None
+        self._shape_transform_drag = None
         self._shape_preview_photos = []
+        self._shape_preview_photos_by_key = {}
         self._drawing_preview_photo = None
         self._drawing_preview_after = None
-        self._drawing_live_tiles = None
-        self._drawing_rendered_point_count = 0
-        self._stroke_preview_tiles = {}
+        self._active_highlighter_overlay = None
+        self._stroke_render_revision = 0
+        self._preview_source_cache_key = None
+        self._preview_source_cache = None
+        self._preview_canvas_item = None
+        self._preview_has_transparency = False
         self.history: list[tuple] = []
         self.redo_history: list[tuple] = []
         # Marks outside the captured image remain visible on the editor canvas
@@ -717,6 +748,9 @@ class ChessSnip:
         self.canvas_only_strokes: list[dict] = []
         self.tool = tk.StringVar(value="pen")
         self._eyedropper_return_tool = "pen"
+        self._pipette_overlay = None
+        self._pipette_photo = None
+        self._pipette_copy_notice_after = None
         self.color = tk.StringVar(value="#000000")
         self.hue = tk.IntVar(master=self.root, value=0)
         self.saturation = tk.IntVar(master=self.root, value=100)
@@ -759,6 +793,7 @@ class ChessSnip:
         self._crop_box = None
         self._crop_drag_fixed = None
         self._crop_drag_offset = None
+        self._crop_drag_edge = None
         self._crop_return_tool = "pen"
         self._crop_toolbar_snapshot = None
         self._crop_toolbar_height_state = None
@@ -800,6 +835,8 @@ class ChessSnip:
         self._recognition_drag = None
         self._recognition_last_text_click = None
         self._recognition_dim_photo = None
+        self._theme_update_in_progress = False
+        self._button_icon_art = {}
         self._recognition_qr_copy_icon = self._create_qr_copy_icon()
         self._recognition_hover_qr_index = None
         self._recognition_tooltip = None
@@ -807,6 +844,10 @@ class ChessSnip:
         self._recognition_tooltip_position = None
         self._recognition_copy_notice_after = None
         self._active_choice_popup = None
+        self._suspended_shape_popup = None
+        self._suspended_shape_popup_place = None
+        self._shape_color_edit_history_pushed = False
+        self._shape_fill_checkbox = None
         self._choice_popup_animation_after = None
         self._choice_popup_animating = False
         self._color_palette_close_after = None
@@ -817,6 +858,7 @@ class ChessSnip:
         self.root.bind_all("<Motion>", self._choice_popup_motion, add="+")
         self.root.bind_all("<ButtonPress-1>", self._choice_popup_click_away, add="+")
         self.root.bind_all("<Escape>", self._choice_popup_escape, add="+")
+        self.root.bind_all("<Delete>", self._delete_selected_shape, add="+")
         self.root.after(100, self._enable_taskbar_button)
         self.root.bind("<Control-Shift-x>", lambda e: self.begin_capture())
         self.root.bind("<Control-s>", lambda e: self.save_as())
@@ -827,8 +869,8 @@ class ChessSnip:
         self.root.bind("<Control-Shift-p>", lambda e: self.chess_to_pgn())
         self._register_hotkey()
         self.root.after(100, self._poll_hotkey)
-        if "--snip" in sys.argv[1:]:
-            self.root.after(250, self.begin_capture)
+        if self._launch_direct_capture:
+            self.root.after_idle(self.begin_capture)
 
     def _load_app_icon(self):
         self._app_icon_photos = []
@@ -856,7 +898,7 @@ class ChessSnip:
         scale = 4
         size = 20
         images = {}
-        for name in ("pen", "highlighter", "eraser", "rectangle", "circle", "crop", "eyedropper", "recognition"):
+        for name in ("pen", "highlighter", "eraser", "rectangle", "circle", "line", "arrow", "shapes", "crop", "eyedropper", "recognition"):
             bitmap = Image.new("RGBA", (size * scale, size * scale), (0, 0, 0, 0))
             draw = ImageDraw.Draw(bitmap)
 
@@ -883,12 +925,36 @@ class ChessSnip:
                 draw.rectangle((4 * scale, 4 * scale, 16 * scale, 16 * scale), outline=color, width=width)
             elif name == "circle":
                 draw.ellipse((3 * scale, 3 * scale, 17 * scale, 17 * scale), outline=color, width=width)
+            elif name == "line":
+                draw.line(xy(((3, 16), (17, 4))), fill=color, width=width)
+            elif name == "arrow":
+                draw.line(xy(((3, 16), (14, 5))), fill=color, width=width)
+                draw.polygon(xy(((10, 5), (17, 3), (15, 10))), fill=color)
+            elif name == "shapes":
+                draw.rectangle((2 * scale, 9 * scale, 12 * scale, 19 * scale), outline=color, width=width)
+                draw.ellipse((8 * scale, 1 * scale, 18 * scale, 11 * scale), outline=color, width=width)
             elif name == "crop":
-                for points in (
-                    ((4, 8), (4, 4), (8, 4)), ((12, 4), (16, 4), (16, 8)),
-                    ((4, 12), (4, 16), (8, 16)), ((12, 16), (16, 16), (16, 12)),
-                ):
-                    draw.line(xy(points), fill=color, width=width)
+                # Recreate the supplied crop mark: a central square with each
+                # side extending past one of its corners.
+                crop_width = scale
+                crop_segments = (
+                    ((1.5, 4.85), (13.45, 4.85)),
+                    ((4.56, 1.8), (4.56, 13.68)),
+                    ((13.45, 4.85), (13.45, 16.73)),
+                    ((4.56, 13.68), (16.02, 13.68)),
+                )
+                cap_radius = crop_width / 2
+                for start, end in crop_segments:
+                    draw.line(xy((start, end)), fill=color, width=crop_width)
+                    for px, py in (start, end):
+                        center_x, center_y = px * scale, py * scale
+                        draw.ellipse(
+                            (
+                                center_x - cap_radius, center_y - cap_radius,
+                                center_x + cap_radius, center_y + cap_radius,
+                            ),
+                            fill=color,
+                        )
             elif name == "eyedropper":
                 draw.line(xy(((6, 14), (13, 7))), fill=color, width=3 * scale)
                 draw.line(xy(((4, 16), (8, 12))), fill=color, width=width)
@@ -907,11 +973,59 @@ class ChessSnip:
                 draw.rectangle((15 * scale, 8 * scale, 17 * scale, 10 * scale), fill=color)
                 draw.rectangle((12 * scale, 12 * scale, 14 * scale, 14 * scale), fill=color)
                 draw.rectangle((16 * scale, 13 * scale, 17 * scale, 14 * scale), fill=color)
-
-            images[name] = ImageTk.PhotoImage(
-                bitmap.resize((size, size), Image.Resampling.LANCZOS), master=self.root,
+            rendered = bitmap.resize(
+                (24, 24) if name == "crop" else (size, size),
+                Image.Resampling.LANCZOS,
+            )
+            images[name] = self._register_button_icon(
+                ImageTk.PhotoImage(rendered, master=self.root), bitmap, rendered.size,
             )
         return images
+
+    def _register_button_icon(self, photo, artwork, display_size=None):
+        """Keep each source icon and its artwork available for separate rendering."""
+        registry = getattr(self, "_button_icon_art", None)
+        if registry is None:
+            registry = self._button_icon_art = {}
+        registry[str(photo)] = (artwork.copy(), display_size or artwork.size, photo)
+        return photo
+
+    def _create_shape_menu_icon(self, shape, color, size=36):
+        """Render a large antialiased icon for one Shapes menu item."""
+        supersample = 4
+        factor = supersample * size / 20
+        bitmap = Image.new("RGBA", (size * supersample, size * supersample), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(bitmap)
+        width = max(2, round(1.8 * factor))
+
+        def box(bounds):
+            return tuple(round(value * factor) for value in bounds)
+
+        if shape == "rectangle":
+            draw.rectangle(box((3, 4, 17, 16)), outline=color, width=width)
+        elif shape == "circle":
+            draw.ellipse(box((3, 3, 17, 17)), outline=color, width=width)
+        elif shape == "line":
+            draw.line(box((3, 16, 17, 4)), fill=color, width=width)
+        elif shape == "cross":
+            draw.line(box((4, 4, 16, 16)), fill=color, width=width)
+            draw.line(box((16, 4, 4, 16)), fill=color, width=width)
+        elif shape == "tick":
+            draw.line(
+                box((3, 10, 8, 15, 17, 5)), fill=color,
+                width=width, joint="curve",
+            )
+        else:
+            draw.line(box((3, 16, 14, 5)), fill=color, width=width)
+            arrowhead = [
+                (round(x * factor), round(y * factor))
+                for x, y in ((9, 5), (17, 3), (15, 11))
+            ]
+            draw.polygon(arrowhead, fill=color)
+        rendered = bitmap.resize((size, size), Image.Resampling.LANCZOS)
+        return self._register_button_icon(
+            ImageTk.PhotoImage(rendered, master=self.root), bitmap, rendered.size,
+        )
 
     def _create_qr_copy_icon(self, size=28):
         """Draw an antialiased copy-link button for detected QR codes."""
@@ -938,8 +1052,9 @@ class ChessSnip:
             (11 * scale, 16 * scale, 17 * scale, 10 * scale),
             fill=white, width=2 * scale,
         )
-        return ImageTk.PhotoImage(
-            bitmap.resize((size, size), Image.Resampling.LANCZOS), master=self.root,
+        rendered = bitmap.resize((size, size), Image.Resampling.LANCZOS)
+        return self._register_button_icon(
+            ImageTk.PhotoImage(rendered, master=self.root), bitmap, rendered.size,
         )
 
     def _create_theme_toggle_icon(self):
@@ -981,16 +1096,17 @@ class ChessSnip:
     def _create_capture_mode_icon_images(self, color):
         """Create consistent icons for the available capture modes."""
         scale = 4
-        size = 20
+        size = 22
+        art_scale = scale * size / 20
         images = {}
         for mode in ("Rectangle", "Freeform", "Window", "Full screen"):
             bitmap = Image.new("RGBA", (size * scale, size * scale), (0, 0, 0, 0))
             draw = ImageDraw.Draw(bitmap)
 
             def xy(points):
-                return [(round(x * scale), round(y * scale)) for x, y in points]
+                return [(round(x * art_scale), round(y * art_scale)) for x, y in points]
 
-            stroke = 2 * scale
+            stroke = round(2 * art_scale)
             if mode == "Rectangle":
                 for points in (
                     ((3, 7), (3, 3), (7, 3)), ((13, 3), (17, 3), (17, 7)),
@@ -998,39 +1114,56 @@ class ChessSnip:
                 ):
                     draw.line(xy(points), fill=color, width=stroke)
             elif mode == "Window":
-                draw.rectangle((2 * scale, 3 * scale, 18 * scale, 17 * scale), outline=color, width=stroke)
+                draw.rectangle((round(2 * art_scale), round(3 * art_scale), round(18 * art_scale), round(17 * art_scale)), outline=color, width=stroke)
                 draw.line(xy(((3, 7), (17, 7))), fill=color, width=stroke)
                 for center_x in (5, 8, 11):
-                    draw.ellipse((center_x * scale - scale // 2, 4 * scale - scale // 2,
-                                  center_x * scale + scale // 2, 4 * scale + scale // 2), fill=color)
+                    draw.ellipse((round(center_x * art_scale - art_scale / 2),
+                                  round(4 * art_scale - art_scale / 2),
+                                  round(center_x * art_scale + art_scale / 2),
+                                  round(4 * art_scale + art_scale / 2)), fill=color)
             elif mode == "Freeform":
                 draw.line(
                     xy(((4, 5), (8, 3), (15, 4), (17, 9), (14, 15), (9, 17), (4, 13), (3, 8), (4, 5))),
                     fill=color, width=stroke, joint="curve",
                 )
             else:
-                draw.rectangle((3 * scale, 4 * scale, 17 * scale, 16 * scale), outline=color, width=stroke)
+                draw.rectangle((round(3 * art_scale), round(4 * art_scale), round(17 * art_scale), round(16 * art_scale)), outline=color, width=stroke)
 
-            images[mode] = ImageTk.PhotoImage(
-                bitmap.resize((size, size), Image.Resampling.LANCZOS), master=self.root,
+            rendered = bitmap.resize((size, size), Image.Resampling.LANCZOS)
+            images[mode] = self._register_button_icon(
+                ImageTk.PhotoImage(rendered, master=self.root), bitmap, rendered.size,
             )
         return images
 
     def _refresh_capture_mode_icon_images(self):
+        old_images = getattr(self, "_capture_mode_icon_images", {})
         self._capture_mode_icon_images = self._create_capture_mode_icon_images(TEXT)
         if self.mode_btn:
             self._update_mode_label()
+        self._release_button_icon_art(old_images)
 
     def _refresh_tool_icon_images(self):
+        old_images = getattr(self, "_tool_icon_images", {})
         self._tool_icon_images = self._create_tool_icon_images(TEXT)
+        self._update_history_buttons()
+        variant_vars = getattr(self, "_tool_variant_vars", {})
         for name, button in getattr(self, "tool_buttons", {}).items():
             try:
-                button.configure(image=self._tool_icon_images[name], compound=tk.LEFT)
+                icon_name = (
+                    name if name == "shapes"
+                    else variant_vars[name].get() if name in variant_vars
+                    else name
+                )
+                button.configure(image=self._tool_icon_images[icon_name], compound=tk.LEFT)
             except tk.TclError:
                 pass
         for group, (button, _label) in getattr(self, "_tool_variant_buttons", {}).items():
             try:
-                button.configure(image=self._tool_icon_images[group], compound=tk.LEFT)
+                icon_name = (
+                    "shapes" if group == "shapes"
+                    else self._tool_variant_vars[group].get()
+                )
+                button.configure(image=self._tool_icon_images[icon_name], compound=tk.LEFT)
             except tk.TclError:
                 pass
         if getattr(self, "pipette_button", None):
@@ -1043,6 +1176,14 @@ class ChessSnip:
                 self.recognition_button.configure(image=self._tool_icon_images["recognition"])
             except tk.TclError:
                 pass
+        self._release_button_icon_art(old_images)
+
+    def _release_button_icon_art(self, images):
+        registry = getattr(self, "_button_icon_art", {})
+        for photo in images.values():
+            entry = registry.get(str(photo))
+            if entry is not None and len(entry) > 2 and entry[2] is photo:
+                registry.pop(str(photo), None)
 
     def _position_window_at_main(self, window):
         """Center an app window over the main window, including on other monitors."""
@@ -1080,26 +1221,37 @@ class ChessSnip:
         brand_icon.pack(side="left",padx=(0,9),pady=4)
         brand_icon.image = self._brand_icon_photo
         tk.Label(brand,text="ChessSnip",bg=PANEL,fg=TEXT,font=("Segoe UI Semibold",10)).pack(side="left")
-        controls=tk.Frame(self.titlebar,bg=PANEL);controls.pack(side="right",fill="y")
+        # Reserve enough room for all window controls. The antialiased button
+        # renderer uses image-backed buttons, whose width unit differs from
+        # text buttons; a fixed control rail prevents Tk from collapsing it.
+        controls=tk.Frame(self.titlebar,bg=PANEL,width=184,height=40)
+        controls.pack(side="right",fill="y")
+        controls.pack_propagate(False)
         self._theme_toggle_icon = self._create_theme_toggle_icon()
-        self.theme_button=tk.Button(
-            controls, image=self._theme_toggle_icon, command=self.toggle_theme,
-            bg=PANEL, fg=TEXT, activebackground=PANEL, activeforeground=TEXT,
-            relief="flat", bd=0, padx=8, pady=2, cursor="hand2",
+        # A Label avoids the white native button face Windows can paint behind
+        # transparent theme icons, especially when switching back to dark mode.
+        self.theme_button=tk.Label(
+            controls, image=self._theme_toggle_icon,
+            bg=PANEL, bd=0, padx=8, pady=2, cursor="hand2",
+            highlightthickness=0,
         )
+        self.theme_button.bind("<Button-1>", lambda _event: self.toggle_theme())
         self.theme_button.pack(side="left", fill="y", padx=(0, 4))
         self._add_tooltip(self.theme_button, "Switch between the dark and light themes")
         minimize_button=tk.Button(controls,text="—",command=self._minimize_window,bg=PANEL,fg=TEXT,activebackground=PANEL2,activeforeground=TEXT,relief="flat",bd=0,width=5,cursor="hand2",font=("Segoe UI",11))
         minimize_button.pack(side="left",fill="y")
+        minimize_button._chesssnip_aa_fixed_size = (46, 38)
         self._bind_title_button_hover(minimize_button)
         self._add_tooltip(minimize_button, "Minimize ChessSnip")
         self.maximize_button=tk.Button(controls,text="□",command=self._toggle_maximize,bg=PANEL,fg=TEXT,activebackground=PANEL2,activeforeground=TEXT,relief="flat",bd=0,width=5,cursor="hand2",font=("Segoe UI",11))
         self.maximize_button.pack(side="left",fill="y")
+        self.maximize_button._chesssnip_aa_fixed_size = (46, 38)
         self._bind_title_button_hover(self.maximize_button)
         self._add_tooltip(self.maximize_button, "Maximize or restore ChessSnip")
         close_button=tk.Button(controls,text="×",command=self.close,bg=PANEL,fg=TEXT,activebackground="#c42b1c",activeforeground="white",relief="flat",bd=0,width=5,cursor="hand2",font=("Segoe UI",12))
         close_button.pack(side="left",fill="y")
-        self._bind_title_button_hover(close_button,"#c42b1c")
+        close_button._chesssnip_aa_fixed_size = (46, 38)
+        self._bind_title_button_hover(close_button, "#c42b1c", "white")
         self._add_tooltip(close_button, "Close ChessSnip")
         for target in (self.titlebar,brand,*brand.winfo_children()):
             target.bind("<ButtonPress-1>",self._titlebar_drag)
@@ -1110,7 +1262,12 @@ class ChessSnip:
         controls = tk.Frame(self.root, bg=PANEL, padx=12, pady=5)
         controls.pack(fill="x", padx=12, pady=5)
         self.capture_controls = controls
-        new_snip_button = tk.Button(controls, text="＋  New", command=self.begin_capture, bg=ACCENT, fg="white", activebackground="#7770ea", activeforeground="white", relief="flat", bd=0, padx=17, pady=7, font=("Segoe UI Semibold", 10), cursor="hand2")
+        new_snip_button = tk.Button(
+            controls, text="＋  New", command=self.begin_capture,
+            bg=ACCENT, fg="white", activebackground="#7770ea",
+            activeforeground="white", relief="flat", bd=0, padx=17, pady=7,
+            font=("Segoe UI Semibold", 10), cursor="hand2",
+        )
         new_snip_button.pack(side="left", padx=(0, 8))
         self._add_tooltip(new_snip_button, "Start a snip · Ctrl+Shift+X")
         self._mode_menu(controls)
@@ -1135,14 +1292,16 @@ class ChessSnip:
         toolbar_row.pack(fill="x")
         history_controls = tk.Frame(toolbar_row, bg=PANEL)
         self.undo_button = tk.Button(
-            history_controls, text="↶", command=self.undo, bg=PANEL, fg=MUTED,
+            history_controls, text="↶",
+            command=self.undo, bg=PANEL, fg=MUTED,
             activebackground=PANEL2, activeforeground=TEXT, relief="flat", bd=0,
             padx=6, pady=4, cursor="hand2", font=("Segoe UI", 11), takefocus=0,
         )
         self.undo_button.pack(side="left", padx=(0, 2))
         self._add_tooltip(self.undo_button, "Undo the last image edit · Ctrl+Z")
         self.redo_button = tk.Button(
-            history_controls, text="↷", command=self.redo, bg=PANEL, fg=MUTED,
+            history_controls, text="↷",
+            command=self.redo, bg=PANEL, fg=MUTED,
             activebackground=PANEL2, activeforeground=TEXT, relief="flat", bd=0,
             padx=6, pady=4, cursor="hand2", font=("Segoe UI", 11), takefocus=0,
         )
@@ -1156,11 +1315,9 @@ class ChessSnip:
         toolrow.place(relx=0.5, rely=0.5, anchor="center")
         self.tool_buttons = {}
         tool_tips = {
-            "pen": "Pen",
-            "highlighter": "Highlighter",
+            "pen": "Choose Pen or Highlighter",
             "eraser": "Eraser",
-            "rectangle": "Choose an outlined or filled rectangle",
-            "circle": "Choose an outlined or filled circle",
+            "shapes": "Shapes",
             "crop": "Crop image",
         }
         self._tool_variant_choices = {}
@@ -1168,11 +1325,15 @@ class ChessSnip:
         self._tool_variant_vars = {}
         self._tool_variant_labels = {
             "pen": {"pen": "Pen", "highlighter": "Highlight"},
-            "rectangle": {"rectangle": "Outline", "rectangle_filled": "Filled"},
-            "circle": {"circle": "Outline", "circle_filled": "Filled"},
+            "shapes": {
+                "rectangle": "Rectangle", "circle": "Circle",
+                "line": "Straight line", "arrow": "Arrow",
+                "cross": "Cross", "tick": "Tick",
+            },
         }
         self._make_variant_tool(
-            toolrow, "pen", "Pen", (("pen", "Pen"), ("highlighter", "Highlighter")),
+            toolrow, "pen", "Pen",
+            (("pen", "Pen", "pen"), ("highlighter", "Highlighter", "highlighter")),
             tool_tips["pen"],
         )
         for name, label in (("eraser", "Eraser"),):
@@ -1184,16 +1345,20 @@ class ChessSnip:
             self._add_tooltip(b, tool_tips[name])
         tk.Frame(toolrow, bg=EDGE, width=1, height=22).pack(side="left", padx=4)
         self._make_variant_tool(
-            toolrow, "rectangle", "Rectangle",
-            (("rectangle", "Outline rectangle"), ("rectangle_filled", "Filled rectangle")),
-            tool_tips["rectangle"],
+            toolrow, "shapes", "Shapes",
+            (
+                ("rectangle", "Rectangle", "rectangle"),
+                ("circle", "Circle", "circle"),
+                ("line", "Straight line", "line"),
+                ("arrow", "Arrow", "arrow"),
+                ("cross", "Cross", "cross"),
+                ("tick", "Tick", "tick"),
+            ),
+            tool_tips["shapes"],
         )
-        self._make_variant_tool(
-            toolrow, "circle", "Circle",
-            (("circle", "Outline circle"), ("circle_filled", "Filled circle")),
-            tool_tips["circle"],
-        )
-        tk.Frame(toolrow, bg=EDGE, width=1, height=22).pack(side="left", padx=4)
+        self.shape_fill_var = tk.BooleanVar(master=self.root, value=False)
+        self.shape_toolbar_separator = tk.Frame(toolrow, bg=EDGE, width=1, height=22)
+        self.shape_toolbar_separator.pack(side="left", padx=4)
         crop_slot = tk.Frame(toolrow, bg=PANEL, width=38, height=32)
         crop_slot.pack(side="left", padx=(0, 2))
         crop_slot.pack_propagate(False)
@@ -1236,7 +1401,8 @@ class ChessSnip:
         )
         self.recognition_button.pack(fill="both", expand=True)
         self._add_tooltip(self.recognition_button, "Scan text and QR codes · click again to exit selection mode")
-        tk.Frame(toolrow, bg=EDGE, width=1, height=22).pack(side="left", padx=4)
+        self.recognition_toolbar_separator = tk.Frame(toolrow, bg=EDGE, width=1, height=22)
+        self.recognition_toolbar_separator.pack(side="left", padx=4)
         pipette_slot = tk.Frame(toolrow, bg=PANEL, width=38, height=32)
         pipette_slot.pack(side="left", padx=(0, 2))
         pipette_slot.pack_propagate(False)
@@ -1246,7 +1412,7 @@ class ChessSnip:
             relief="flat", bd=0, padx=2, pady=2, cursor="hand2",
         )
         self.pipette_button.pack(fill="both", expand=True)
-        self._add_tooltip(self.pipette_button, "Pick the color of a pixel from the image")
+        self._add_tooltip(self.pipette_button, "Pick a color anywhere on screen · click to copy its hex code")
         self._palette_color_names = {
             "#ff4b62": "Pink-red", "#ff8a3d": "Orange", "#f5c451": "Yellow",
             "#a8d84f": "Lime", "#4bd4aa": "Mint", "#40c8dd": "Cyan",
@@ -1272,14 +1438,20 @@ class ChessSnip:
         )
         self.color_picker_button.pack(fill="both", expand=True)
         self._add_tooltip(self.color_picker_button, "Choose an annotation color")
-        tk.Frame(toolrow, bg=EDGE, width=1, height=22).pack(side="left", padx=4)
+        self.color_picker_toolbar_separator = tk.Frame(toolrow, bg=EDGE, width=1, height=22)
+        self.color_picker_toolbar_separator.pack(side="left", padx=4)
+        # Put color tools in the former Crop/OCR group, and move Crop/OCR to
+        # the former color-tool group while keeping each pair's order.
+        color_picker_slot.pack_configure(before=crop_slot)
+        pipette_slot.pack_configure(before=crop_slot)
+        self.color_picker_toolbar_separator.pack_configure(before=crop_slot)
         tk.Label(toolrow, text="SIZE", bg=PANEL, fg=MUTED, font=("Segoe UI", 8, "bold")).pack(side="left", padx=(0, 4))
-        self.size_slider = ModernSlider(toolrow, self.width, 1, 100, length=84)
+        self.size_slider = ModernSlider(toolrow, self.width, 1, 30, length=84)
         self.size_slider.pack(side="left", padx=(0, 3))
         self.size_value = tk.StringVar(master=self.root, value=str(self.width.get()))
         tk.Label(toolrow, textvariable=self.size_value, bg=PANEL, fg=TEXT, font=("Segoe UI Semibold", 9), width=3, anchor="center").pack(side="left", padx=(0, 2))
         self.width.trace_add("write", lambda *_: self.size_value.set(str(self.width.get())))
-        self._add_tooltip(self.size_slider, "Set pen, highlighter, and eraser width from 1 to 100 px")
+        self._add_tooltip(self.size_slider, "Set pen, highlighter, and eraser width")
         tk.Frame(toolrow, bg=EDGE, width=1, height=22).pack(side="left", padx=4)
         tk.Label(toolrow, text="↻", bg=PANEL, fg=MUTED, font=("Segoe UI", 12, "bold")).pack(side="left", padx=(0, 3))
         self.rotation_slider = ModernSlider(
@@ -1292,13 +1464,6 @@ class ChessSnip:
             font=("Segoe UI Semibold", 9), width=5, anchor="w",
         )
         self.rotation_angle_label.pack(side="left")
-        rotation_reset_button = tk.Button(
-            toolrow, text="↺", command=self.reset_rotation,
-            bg=PANEL2, fg=TEXT, activebackground=EDGE, activeforeground=TEXT,
-            relief="flat", bd=0, padx=5, pady=4, cursor="hand2",
-        )
-        rotation_reset_button.pack(side="left", padx=(2, 4))
-        self._add_tooltip(rotation_reset_button, "Return the image to its original orientation")
         self._update_history_buttons()
         self._add_tooltip(self.rotation_slider, "Set the image angle from 0° to 360°; it snaps near each 90° mark, and intermediate angles remain available")
         self.rotation_slider.bind("<ButtonRelease-1>", self._rotation_slider_release, add="+")
@@ -1379,64 +1544,633 @@ class ChessSnip:
         widget = event.widget
         if not isinstance(widget, (tk.Button, tk.Menubutton)):
             return
-        if not getattr(widget, "_chesssnip_rounding_bound", False):
-            widget.bind("<Configure>", self._round_button_on_configure, add="+")
-            widget._chesssnip_rounding_bound = True
-        widget.after_idle(lambda target=widget: self._apply_button_corner_region(target))
+        self._watch_button_rounding(widget)
+        self._queue_button_surface_refresh(widget)
+        widget.after(
+            60,
+            lambda target=widget: self._refresh_button_surface_after_map(target),
+        )
+
+    def _refresh_button_surface_after_map(self, button):
+        """Rebuild the face after Windows finishes mapping the native button."""
+        try:
+            if not button.winfo_exists():
+                return
+            self._queue_button_surface_refresh(button, invalidate=True)
+        except (AttributeError, tk.TclError):
+            pass
+
+    def _watch_button_rounding(self, widget):
+        if getattr(widget, "_chesssnip_rounding_bound", False):
+            return
+        widget.bind("<Configure>", self._round_button_on_configure, add="+")
+        widget._chesssnip_rounding_bound = True
+
+    def _watch_existing_buttons(self):
+        """Bind the initially hidden editor buttons before they are mapped."""
+        pending = [self.root]
+        while pending:
+            widget = pending.pop()
+            try:
+                if not widget.winfo_exists():
+                    continue
+                if isinstance(widget, (tk.Button, tk.Menubutton)):
+                    self._watch_button_rounding(widget)
+                pending.extend(widget.winfo_children())
+            except tk.TclError:
+                continue
 
     def _round_button_on_configure(self, event):
         widget = event.widget
         if isinstance(widget, (tk.Button, tk.Menubutton)):
-            widget.after_idle(lambda target=widget: self._apply_button_corner_region(target))
+            self._queue_button_surface_refresh(widget)
 
-    @staticmethod
-    def _apply_button_corner_region(button):
-        """Clip Tk buttons to a subtle rounded rectangle on Windows."""
-        if sys.platform != "win32":
-            return
+    def _queue_button_surface_refresh(self, button, invalidate=False):
+        """Coalesce multiple configure requests into one surface render per button."""
+        try:
+            if not button.winfo_exists():
+                return
+            if invalidate:
+                button._chesssnip_button_surface_key = None
+            if self._theme_update_in_progress:
+                return
+            pending = getattr(button, "_chesssnip_surface_refresh_after", None)
+            if pending is not None:
+                try:
+                    button.after_cancel(pending)
+                except tk.TclError:
+                    pass
+            button._chesssnip_surface_refresh_after = button.after_idle(
+                lambda target=button: self._run_button_surface_refresh(target),
+            )
+        except (AttributeError, tk.TclError):
+            pass
+
+    def _run_button_surface_refresh(self, button):
+        try:
+            button._chesssnip_surface_refresh_after = None
+            if self._theme_update_in_progress:
+                return
+            if button.winfo_exists():
+                self._apply_button_corner_region(button)
+        except (AttributeError, tk.TclError):
+            pass
+
+    def _apply_button_corner_region(self, button):
+        """Draw the rounded button face, using a native region only as fallback."""
         try:
             if not button.winfo_exists():
                 return
             width, height = button.winfo_width(), button.winfo_height()
-            if width < 8 or height < 8 or getattr(button, "_chesssnip_region_size", None) == (width, height):
+            if width < 8 or height < 8:
                 return
 
+            self._prepare_antialiased_button(button)
+            if self._render_antialiased_button(button, width, height):
+                return
+
+            # Unregistered native images can still use the old Windows region
+            # fallback. Keep it out of the normal antialiased rendering path.
+            if sys.platform != "win32" or getattr(
+                button, "_chesssnip_region_size", None,
+            ) == (width, height):
+                return
             user32 = ctypes.windll.user32
             gdi32 = ctypes.windll.gdi32
             gdi32.CreateRoundRectRgn.argtypes = (
-                ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                ctypes.c_int, ctypes.c_int, ctypes.c_int,
             )
             gdi32.CreateRoundRectRgn.restype = ctypes.c_void_p
             user32.SetWindowRgn.argtypes = (wintypes.HWND, ctypes.c_void_p, wintypes.BOOL)
             user32.SetWindowRgn.restype = ctypes.c_int
             gdi32.DeleteObject.argtypes = (ctypes.c_void_p,)
             gdi32.DeleteObject.restype = wintypes.BOOL
-
-            corner_diameter = min(8, max(4, height // 5))
-            region = gdi32.CreateRoundRectRgn(0, 0, width + 1, height + 1, corner_diameter, corner_diameter)
+            corner_diameter = min(12, max(8, round(height * 0.32)))
+            region = gdi32.CreateRoundRectRgn(
+                0, 0, width + 1, height + 1, corner_diameter, corner_diameter,
+            )
             if not region:
                 return
             if user32.SetWindowRgn(button.winfo_id(), region, True):
                 button._chesssnip_region_size = (width, height)
-            else:
-                gdi32.DeleteObject(region)
+                return
+            gdi32.DeleteObject(region)
         except (AttributeError, OSError, tk.TclError, TypeError):
             pass
 
-    def _bind_title_button_hover(self, button, hover_bg=None):
+    @staticmethod
+    def _button_parent_color(button):
+        try:
+            return button.master.cget("bg")
+        except (tk.TclError, AttributeError):
+            return PANEL
+
+    def _prepare_antialiased_button(self, button):
+        if getattr(button, "_chesssnip_aa_button_ready", False):
+            return
+        try:
+            original_configure = button.configure
+            button._chesssnip_original_configure = original_configure
+            button._chesssnip_requested_bg = button.cget("bg")
+            button._chesssnip_requested_active_bg = button.cget("activebackground")
+            button._chesssnip_original_text = button.cget("text")
+            button._chesssnip_original_image = str(button.cget("image") or "")
+            original_entry = self._button_icon_art.get(button._chesssnip_original_image)
+            button._chesssnip_original_photo = (
+                original_entry[2] if original_entry is not None else button.cget("image") or None
+            )
+            button._chesssnip_button_surface_photo = None
+            button._chesssnip_button_surface_key = None
+            button._chesssnip_aa_button_ready = True
+
+            def configure(cnf=None, **kwargs):
+                if getattr(button, "_chesssnip_rendering_button", False):
+                    return original_configure(cnf, **kwargs)
+                if cnf is None and not kwargs:
+                    return original_configure(cnf, **kwargs)
+                if cnf is not None and not isinstance(cnf, dict):
+                    return original_configure(cnf, **kwargs)
+
+                options = dict(cnf or {})
+                options.update(kwargs)
+                if not options:
+                    return original_configure(cnf, **kwargs)
+                for option in ("bg", "background"):
+                    if option in options:
+                        button._chesssnip_requested_bg = options[option]
+                for option in ("activebackground",):
+                    if option in options:
+                        button._chesssnip_requested_active_bg = options[option]
+                if "text" in options:
+                    button._chesssnip_original_text = options["text"]
+                if "image" in options:
+                    image = options["image"]
+                    button._chesssnip_original_image = str(image) if image else ""
+                    button._chesssnip_original_photo = image if image else None
+
+                parent_color = self._button_parent_color(button)
+                actual = dict(options)
+                if "bg" in actual:
+                    actual["bg"] = parent_color
+                if "background" in actual:
+                    actual["background"] = parent_color
+                if "activebackground" in actual:
+                    actual["activebackground"] = parent_color
+                if "image" in actual:
+                    actual["image"] = options["image"]
+                button._chesssnip_rendering_button = True
+                try:
+                    result = original_configure(actual)
+                finally:
+                    button._chesssnip_rendering_button = False
+                if any(option in options for option in (
+                    "bg", "background", "activebackground", "image", "text", "fg", "foreground",
+                )):
+                    self._queue_button_surface_refresh(button)
+                return result
+
+            button.configure = configure
+            button.config = configure
+            button.bind(
+                "<ButtonPress-1>",
+                lambda _event, target=button: self._set_button_pressed_state(target, True),
+                add="+",
+            )
+            button.bind(
+                "<ButtonRelease-1>",
+                lambda _event, target=button: self._set_button_pressed_state(target, False),
+                add="+",
+            )
+        except (AttributeError, tk.TclError, TypeError):
+            button._chesssnip_aa_button_ready = False
+
+    def _set_button_pressed_state(self, button, pressed):
+        if not getattr(button, "_chesssnip_aa_button_ready", False):
+            return
+        button._chesssnip_visual_bg = (
+            getattr(button, "_chesssnip_requested_active_bg", None) if pressed else None
+        )
+        button._chesssnip_visual_fg = (
+            button.cget("activeforeground") if pressed else None
+        )
+        self._render_antialiased_button(button, button.winfo_width(), button.winfo_height())
+
+    def _render_antialiased_button(self, button, width, height):
+        try:
+            text = str(getattr(button, "_chesssnip_original_text", ""))
+            source_name = getattr(button, "_chesssnip_original_image", "")
+            icon_entry = self._button_icon_art.get(source_name)
+            if icon_entry is None:
+                # A few review-dialog controls generate theme-colored artwork
+                # per window instead of using the app-wide icon registry.
+                icon_entry = getattr(button, "_chesssnip_inline_icon_art", {}).get(source_name)
+            if icon_entry is not None:
+                icon, icon_size = icon_entry[:2]
+            elif source_name:
+                # Leave uncommon images to Tk and use the native rounded
+                # region fallback instead of drawing an incomplete icon.
+                return False
+            else:
+                icon, icon_size = None, None
+            try:
+                anchor = str(button.cget("anchor"))
+            except tk.TclError:
+                anchor = "center"
+
+            parent_color = self._button_parent_color(button)
+            fill_color = getattr(button, "_chesssnip_visual_bg", None)
+            if fill_color is None:
+                fill_color = getattr(button, "_chesssnip_requested_bg", button.cget("bg"))
+            foreground = getattr(button, "_chesssnip_visual_fg", None) or button.cget("fg")
+            width, height = max(8, width), max(8, height)
+            fixed_size = getattr(button, "_chesssnip_aa_fixed_size", None)
+            if fixed_size:
+                width, height = fixed_size
+            signature = (
+                width, height, str(parent_color), str(fill_color), str(foreground),
+                source_name, text, str(button.cget("font")), anchor, str(foreground),
+            )
+            if getattr(button, "_chesssnip_button_surface_key", None) == signature:
+                return True
+
+            scale = 4
+            fill_rgb = self._button_rgb(button, fill_color)
+            parent_rgb = self._button_rgb(button, parent_color)
+            image = Image.new(
+                "RGBA", (width * scale, height * scale), (*parent_rgb, 255),
+            )
+            draw = ImageDraw.Draw(image)
+            radius = min(7, max(4, round(height * 0.18))) * scale
+            draw.rounded_rectangle(
+                (0, 0, width * scale - 1, height * scale - 1),
+                radius=radius, fill=(*fill_rgb, 255),
+            )
+
+            rendered_text = ""
+            if icon is not None:
+                has_dropdown_arrow = text.rstrip().endswith("▾")
+                label = text.rstrip()[:-1].rstrip() if has_dropdown_arrow else text
+                if text == "▾":
+                    label = ""
+                label_font = self._button_pil_font(button, scale) if label else None
+                label_box = draw.textbbox((0, 0), label, font=label_font) if label else (0, 0, 0, 0)
+                label_width = label_box[2] - label_box[0]
+                label_height = label_box[3] - label_box[1]
+                gap = 7 * scale if label else 0
+                padding = 8 * scale if label else 0
+                arrow_space = 15 * scale if has_dropdown_arrow and text != "▾" else 0
+                available_icon_width = width * scale - 2 * padding - gap - label_width - arrow_space
+                preferred_icon_size = (
+                    max(icon_size) if getattr(button, "_chesssnip_dropdown_entry", False)
+                    else min(icon_size)
+                )
+                max_icon_size = max(
+                    8,
+                    min(
+                        preferred_icon_size, height - 8,
+                        width - (17 if text == "▾" else 8),
+                        max(8, available_icon_width // scale),
+                    ),
+                )
+                icon_width = min(preferred_icon_size, max_icon_size)
+                icon_height = min(preferred_icon_size, max_icon_size)
+                content_width = icon_width * scale + gap + label_width + arrow_space
+                if label and anchor in ("w", "nw", "sw"):
+                    content_x = padding
+                else:
+                    content_x = (width * scale - content_width) // 2
+                icon_x = content_x // scale if label else (width - icon_width) // 2
+                icon_y = (height - icon_height) // 2
+                if text == "▾":
+                    icon_x = max(2, (width - icon_width - 7) // 2)
+                # Keep the complete button face, including its icon, in one
+                # image. A child Label over a native Tk Button is repainted
+                # underneath the button on Windows during hover/press updates.
+                icon_layer = icon.convert("RGBA").resize(
+                    (icon_width * scale, icon_height * scale),
+                    Image.Resampling.LANCZOS,
+                )
+                image.alpha_composite(
+                    icon_layer, (icon_x * scale, icon_y * scale),
+                )
+                if label:
+                    label_x = content_x + icon_width * scale + gap
+                    label_y = (height * scale - label_height) // 2 - label_box[1]
+                    draw.text(
+                        (label_x - label_box[0], label_y), label,
+                        font=label_font, fill=(*self._button_rgb(button, foreground), 255),
+                    )
+                if has_dropdown_arrow:
+                    arrow_rgb = self._button_rgb(button, foreground)
+                    center_x = (width - 8) * scale
+                    center_y = (height // 2 + 1) * scale
+                    draw.polygon(
+                        ((center_x - 2 * scale, center_y - scale),
+                         (center_x + 2 * scale, center_y - scale),
+                         (center_x, center_y + scale)),
+                        fill=(*arrow_rgb, 255),
+                    )
+
+            elif text:
+                self._draw_button_label_art(button, draw, text, width, height, scale, anchor)
+
+            photo = ImageTk.PhotoImage(
+                image.resize((width, height), Image.Resampling.LANCZOS), master=self.root,
+            )
+            button._chesssnip_button_surface_photo = photo
+            button._chesssnip_button_surface_key = signature
+            parent_color = self._button_parent_color(button)
+            button._chesssnip_rendering_button = True
+            try:
+                button._chesssnip_original_configure(
+                    image=photo,
+                    text=rendered_text, compound=tk.CENTER,
+                    bg=parent_color, activebackground=parent_color,
+                    width=width, height=height,
+                    padx=0, pady=0, relief="flat", bd=0, highlightthickness=0,
+                )
+            finally:
+                button._chesssnip_rendering_button = False
+            return True
+        except (AttributeError, OSError, tk.TclError, TypeError, ValueError):
+            return False
+
+    def _draw_button_label_art(self, button, draw, text, width, height, scale, anchor):
+        """Draw button labels with explicit artwork for symbols absent from UI fonts."""
+        foreground = getattr(button, "_chesssnip_visual_fg", None) or button.cget("fg")
+        if str(button.cget("state")) == tk.DISABLED:
+            foreground = button.cget("disabledforeground")
+        color = (*self._button_rgb(button, foreground), 255)
+        font = self._button_pil_font(button, scale)
+        center_x, center_y = (width * scale) // 2, (height * scale) // 2
+
+        def text_size(value):
+            box = draw.textbbox((0, 0), value, font=font)
+            return box, box[2] - box[0], box[3] - box[1]
+
+        def draw_text(value, x, y):
+            box, _, _ = text_size(value)
+            draw.text((x - box[0], y - box[1]), value, font=font, fill=color)
+
+        def draw_centered(value, cx=center_x, cy=center_y):
+            box, text_width, text_height = text_size(value)
+            draw.text(
+                (cx - text_width // 2 - box[0], cy - text_height // 2 - box[1]),
+                value, font=font, fill=color,
+            )
+
+        stroke = max(2, 2 * scale)
+
+        def draw_plus(cx, cy):
+            reach = 4 * scale
+            draw.line((cx - reach, cy, cx + reach, cy), fill=color, width=stroke)
+            draw.line((cx, cy - reach, cx, cy + reach), fill=color, width=stroke)
+
+        def draw_cross(cx, cy):
+            reach = 4 * scale
+            draw.line((cx - reach, cy - reach, cx + reach, cy + reach), fill=color, width=stroke)
+            draw.line((cx - reach, cy + reach, cx + reach, cy - reach), fill=color, width=stroke)
+
+        def draw_check(cx, cy):
+            draw.line(
+                (cx - 5 * scale, cy, cx - 1 * scale, cy + 4 * scale,
+                 cx + 6 * scale, cy - 5 * scale),
+                fill=color, width=stroke, joint="curve",
+            )
+
+        def draw_square(cx, cy):
+            side = 8 * scale
+            draw.rectangle(
+                (cx - side // 2, cy - side // 2, cx + side // 2, cy + side // 2),
+                fill=color,
+            )
+
+        def draw_pawn(cx, cy):
+            # Use the system chess glyph so this reads as a recognizable pawn,
+            # while keeping it rendered into the existing antialiased button.
+            font_path = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "seguisym.ttf"
+            try:
+                pawn_font = ImageFont.truetype(str(font_path), 25 * scale)
+            except OSError:
+                pawn_font = font
+            bounds = draw.textbbox((0, 0), "♟", font=pawn_font)
+            pawn_width = bounds[2] - bounds[0]
+            pawn_height = bounds[3] - bounds[1]
+            draw.text(
+                (cx - pawn_width // 2 - bounds[0], cy - pawn_height // 2 - bounds[1]),
+                "♟", font=pawn_font, fill=color,
+            )
+
+        def draw_arrow(cx, cy):
+            draw.line((cx - 5 * scale, cy, cx + 4 * scale, cy), fill=color, width=stroke)
+            draw.polygon(
+                ((cx + 1 * scale, cy - 4 * scale), (cx + 6 * scale, cy),
+                 (cx + 1 * scale, cy + 4 * scale)),
+                fill=color,
+            )
+
+        def draw_undo(cx, cy, reverse=False):
+            direction = -1 if reverse else 1
+            path = ((cx - direction * 5 * scale, cy - 3 * scale),
+                    (cx, cy - 3 * scale), (cx + direction * 3 * scale, cy),
+                    (cx + direction * 3 * scale, cy + 5 * scale))
+            draw.line(path, fill=color, width=stroke, joint="curve")
+            tip_x, tip_y = path[0]
+            draw.polygon(
+                ((tip_x, tip_y), (tip_x + direction * 5 * scale, tip_y - 4 * scale),
+                 (tip_x + direction * 5 * scale, tip_y + 4 * scale)),
+                fill=color,
+            )
+
+        def draw_triangle(up=False):
+            half_width = 4 * scale
+            half_height = 4 * scale
+            points = (
+                (center_x, center_y - half_height),
+                (center_x + half_width, center_y + half_height),
+                (center_x - half_width, center_y + half_height),
+            ) if up else (
+                (center_x - half_width, center_y - half_height),
+                (center_x + half_width, center_y - half_height),
+                (center_x, center_y + half_height),
+            )
+            draw.polygon(points, fill=color)
+
+        def draw_restore():
+            draw.rectangle(
+                (center_x - 3 * scale, center_y - 5 * scale,
+                 center_x + 5 * scale, center_y + 3 * scale),
+                outline=color, width=stroke,
+            )
+            draw.rectangle(
+                (center_x - 5 * scale, center_y - 3 * scale,
+                 center_x + 3 * scale, center_y + 5 * scale),
+                outline=color, width=stroke,
+            )
+
+        def draw_clockwise_arrow():
+            radius = 5 * scale
+            draw.arc(
+                (center_x - radius, center_y - radius,
+                 center_x + radius, center_y + radius),
+                start=205, end=505, fill=color, width=stroke,
+            )
+            draw.polygon(
+                ((center_x + 4 * scale, center_y - 5 * scale),
+                 (center_x + 5 * scale, center_y - scale),
+                 (center_x + scale, center_y - 3 * scale)),
+                fill=color,
+            )
+
+        def draw_symbol_label(painter, label, icon_width=12):
+            box, label_width, _label_height = text_size(label)
+            gap = 6 * scale
+            total_width = icon_width * scale + gap + label_width
+            start_x = (width * scale - total_width) // 2
+            painter(start_x + icon_width * scale // 2, center_y)
+            draw_text(label, start_x + icon_width * scale + gap, center_y - (box[3] - box[1]) // 2)
+
+        if text == "—":
+            draw.line((center_x - 5 * scale, center_y, center_x + 5 * scale, center_y), fill=color, width=stroke)
+        elif text == "□":
+            draw.rectangle(
+                (center_x - 5 * scale, center_y - 5 * scale, center_x + 5 * scale, center_y + 5 * scale),
+                outline=color, width=stroke,
+            )
+        elif text == "×":
+            draw_cross(center_x, center_y)
+        elif text == "✕":
+            draw_cross(center_x, center_y)
+        elif text == "❐":
+            draw_restore()
+        elif text == "▲":
+            draw_triangle(up=True)
+        elif text == "▼":
+            draw_triangle(up=False)
+        elif text == "↻":
+            draw_clockwise_arrow()
+        elif text in ("＋  New", "+  New"):
+            draw_symbol_label(draw_plus, "New", 10)
+        elif text == "■  Stop":
+            draw_symbol_label(draw_square, "Stop", 10)
+        elif text == "✓ Accept":
+            draw_symbol_label(draw_check, "Accept", 12)
+        elif text == "× Cancel":
+            draw_symbol_label(draw_cross, "Cancel", 12)
+        elif text == "♟  Chess → PGN":
+            # Split the label so the pawn and arrow remain crisp regardless of font fallback.
+            parts = ("Chess", "PGN")
+            boxes = [text_size(part) for part in parts]
+            gap = 5 * scale
+            pawn_width = 16 * scale
+            arrow_width = 12 * scale
+            total_width = pawn_width + gap + boxes[0][1] + gap + arrow_width + gap + boxes[1][1]
+            x = (width * scale - total_width) // 2
+            draw_pawn(x + pawn_width // 2, center_y)
+            x += pawn_width + gap
+            draw_text("Chess", x, center_y - boxes[0][2] // 2)
+            x += boxes[0][1] + gap
+            draw_arrow(x + arrow_width // 2, center_y)
+            x += arrow_width + gap
+            draw_text("PGN", x, center_y - boxes[1][2] // 2)
+        elif text == "↶":
+            draw_undo(center_x, center_y)
+        elif text == "↷":
+            draw_undo(center_x, center_y, reverse=True)
+        elif text == "▾":
+            draw.polygon(
+                ((center_x - 4 * scale, center_y - 2 * scale),
+                 (center_x + 4 * scale, center_y - 2 * scale),
+                 (center_x, center_y + 3 * scale)),
+                fill=color,
+            )
+        elif "\n" in text:
+            box = draw.multiline_textbbox((0, 0), text, font=font, spacing=2 * scale)
+            draw.multiline_text(
+                ((width * scale - (box[2] - box[0])) // 2 - box[0],
+                 (height * scale - (box[3] - box[1])) // 2 - box[1]),
+                text, font=font, fill=color, spacing=2 * scale,
+                align=str(button.cget("justify")),
+            )
+        else:
+            draw_centered(text)
+
+    @staticmethod
+    def _button_pil_font(button, scale):
+        try:
+            font_spec = button.cget("font")
+            actual = button.tk.call("font", "actual", font_spec)
+            options = dict(zip(actual[::2], actual[1::2]))
+            family = str(options.get("-family", "Segoe UI"))
+            weight = str(options.get("-weight", "normal")).lower()
+            slant = str(options.get("-slant", "roman")).lower()
+            line_height = int(button.tk.call("font", "metrics", font_spec, "-linespace"))
+            pixel_size = max(8, (line_height - 2) * scale)
+            family_key = family.lower().replace(" ", "")
+            font_file = {
+                ("segoeui", "bold"): "segoeuib.ttf",
+                ("segoeuisemibold", "normal"): "seguisb.ttf",
+                ("segoeuisemibold", "bold"): "seguisb.ttf",
+                ("segoeuisymbol", "normal"): "seguisym.ttf",
+                ("segoeuiemoji", "normal"): "seguiemj.ttf",
+                ("arial", "bold"): "arialbd.ttf",
+                ("tahoma", "bold"): "tahomabd.ttf",
+            }.get((family_key, weight))
+            if font_file is None:
+                font_file = {
+                    "segoeui": "segoeui.ttf",
+                    "segoeuisemibold": "seguisb.ttf",
+                    "segoeuisymbol": "seguisym.ttf",
+                    "segoeuiemoji": "seguiemj.ttf",
+                    "arial": "arial.ttf",
+                    "tahoma": "tahoma.ttf",
+                    "symbol": "symbol.ttf",
+                }.get(family_key, family_key + ("bd" if weight == "bold" else "") + ".ttf")
+            if slant == "italic" and family_key == "segoeui" and weight != "bold":
+                font_file = "segoeuii.ttf"
+            font_path = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / font_file
+            return ImageFont.truetype(str(font_path), pixel_size)
+        except (AttributeError, OSError, tk.TclError, TypeError, ValueError):
+            try:
+                return ImageFont.truetype("arial.ttf", max(8, 12 * scale))
+            except OSError:
+                return ImageFont.load_default()
+
+    @staticmethod
+    def _button_rgb(button, color):
+        red, green, blue = button.winfo_rgb(color)
+        return red >> 8, green >> 8, blue >> 8
+
+    def _bind_title_button_hover(self, button, hover_bg=None, hover_fg=None):
         button._chesssnip_custom_hover = True
         if hover_bg:
             button.configure(activebackground=hover_bg)
 
-        def enter(_event, target=button):
-            target._chesssnip_idle_bg = target.cget("bg")
-            target.configure(bg=target.cget("activebackground"))
+        def enter(_event, target=button, foreground=hover_fg):
+            target._chesssnip_idle_bg = getattr(
+                target, "_chesssnip_requested_bg", target.cget("bg"),
+            )
+            active = getattr(
+                target, "_chesssnip_requested_active_bg", target.cget("activebackground"),
+            )
+            target.configure(bg=active)
+            if foreground:
+                target.configure(fg=foreground, activeforeground=foreground)
 
-        def leave(_event, target=button):
+        def leave(_event, target=button, foreground=hover_fg):
             idle = getattr(target, "_chesssnip_idle_bg", None)
             try:
-                if idle is not None and target.cget("bg").lower() == target.cget("activebackground").lower():
+                current = getattr(target, "_chesssnip_requested_bg", target.cget("bg"))
+                active = getattr(
+                    target, "_chesssnip_requested_active_bg", target.cget("activebackground"),
+                )
+                if idle is not None and str(current).lower() == str(active).lower():
                     target.configure(bg=idle)
+                if foreground:
+                    # Use the active palette in case a theme switch happened
+                    # while the pointer was over this close button.
+                    target.configure(fg=TEXT, activeforeground=TEXT)
             except tk.TclError:
                 pass
 
@@ -1454,9 +2188,11 @@ class ChessSnip:
         if getattr(button, "_chesssnip_custom_hover", False):
             return
         try:
+            if getattr(button, "_chesssnip_hover_colors", None):
+                return
             if str(button.cget("state")) == tk.DISABLED:
                 return
-            idle = button.cget("bg")
+            idle = getattr(button, "_chesssnip_requested_bg", button.cget("bg"))
             red, green, blue = (value / 65535 for value in button.winfo_rgb(idle))
             hue, lightness, saturation = colorsys.rgb_to_hls(red, green, blue)
             hover_lightness = lightness + 0.075 if lightness < 0.55 else lightness - 0.075
@@ -1471,13 +2207,13 @@ class ChessSnip:
     def _button_hover_leave(event):
         button = event.widget
         colors = getattr(button, "_chesssnip_hover_colors", None)
-        button._chesssnip_hover_colors = None
         if not colors:
             return
+        button._chesssnip_hover_colors = None
         idle, hover = colors
         try:
-            # Keep a newer selected/theme color if it changed while hovered.
-            if button.cget("bg").lower() == hover.lower():
+            current = getattr(button, "_chesssnip_requested_bg", button.cget("bg"))
+            if str(current).lower() == hover.lower():
                 button.configure(bg=idle)
         except (tk.TclError, AttributeError):
             pass
@@ -1487,6 +2223,8 @@ class ChessSnip:
         widget._chesssnip_tooltip = ChessSnipTooltip(widget, text)
 
     def toggle_theme(self):
+        if self._theme_update_in_progress:
+            return
         self._close_choice_popup()
         previous_name = self.theme_name
         next_name = "light" if previous_name == "dark" else "dark"
@@ -1497,23 +2235,35 @@ class ChessSnip:
         new_special = THEME_SPECIAL_COLORS[next_name]
         color_map.update({old_special[key].lower(): new_special[key] for key in old_special})
 
-        self.theme_name = next_name
-        _activate_palette(next_name)
-        self._refresh_tool_icon_images()
-        self._refresh_capture_mode_icon_images()
-        self._recolor_theme_tree(self.root, color_map)
-        self._theme_toggle_icon = self._create_theme_toggle_icon()
-        self.theme_button.configure(image=self._theme_toggle_icon)
-        self.set_color(self.color.get())
-        self._style_mode_buttons()
-        self._apply_dwm_theme_colors()
-        if self.image:
-            self._render_preview()
+        self._theme_update_in_progress = True
         try:
-            SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-            SETTINGS_PATH.write_text(json.dumps({"theme": next_name}, indent=2), encoding="utf-8")
-        except OSError:
-            pass
+            self.theme_name = next_name
+            _activate_palette(next_name)
+            self._refresh_tool_icon_images()
+            self._refresh_capture_mode_icon_images()
+            self._recolor_theme_tree(self.root, color_map)
+            self._theme_toggle_icon = self._create_theme_toggle_icon()
+            self.theme_button.configure(image=self._theme_toggle_icon)
+            # The annotation color is independent of the theme. Reassert it on
+            # the color button without resetting HSV sliders or redrawing swatches.
+            if self.color_picker_button:
+                selected_color = self.color.get()
+                self.color_picker_button.configure(
+                    bg=selected_color, activebackground=selected_color,
+                )
+            self._style_mode_buttons()
+            self._apply_dwm_theme_colors()
+            self._refresh_preview_matte()
+            try:
+                SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+                SETTINGS_PATH.write_text(
+                    json.dumps({"theme": next_name}, indent=2), encoding="utf-8",
+                )
+            except OSError:
+                pass
+        finally:
+            self._theme_update_in_progress = False
+            self._refresh_antialiased_button_surfaces()
 
     def _recolor_theme_tree(self, widget, color_map):
         color_options = (
@@ -1522,6 +2272,7 @@ class ChessSnip:
             "highlightcolor", "insertbackground", "selectbackground",
             "selectforeground", "readonlybackground", "troughcolor", "selectcolor",
         )
+        aliases = {"background": "bg", "foreground": "fg"}
         try:
             if not widget.winfo_exists():
                 return
@@ -1530,22 +2281,55 @@ class ChessSnip:
             # the actual white annotation color when the theme is switched.
             is_color_swatch = widget in self.color_buttons.values()
             available = widget.configure()
+            updates = {}
+            seen_options = set()
             for option in color_options:
-                if option not in available:
+                canonical = aliases.get(option, option)
+                if canonical in seen_options:
                     continue
-                if is_color_swatch and option in ("bg", "background", "activebackground"):
+                configured_option = canonical if canonical in available else option
+                if configured_option not in available:
+                    continue
+                seen_options.add(canonical)
+                if is_color_swatch and canonical in ("bg", "activebackground"):
                     continue
                 try:
-                    old_color = str(widget.cget(option)).lower()
+                    if isinstance(widget, (tk.Button, tk.Menubutton)) and canonical == "bg":
+                        old_value = getattr(
+                            widget, "_chesssnip_requested_bg", widget.cget(configured_option),
+                        )
+                    elif isinstance(widget, (tk.Button, tk.Menubutton)) and canonical == "activebackground":
+                        old_value = getattr(
+                            widget, "_chesssnip_requested_active_bg",
+                            widget.cget(configured_option),
+                        )
+                    else:
+                        old_value = widget.cget(configured_option)
+                    old_color = str(old_value).lower()
                     if old_color in color_map:
-                        widget.configure(**{option: color_map[old_color]})
-                    if option in ("bg", "background"):
+                        updates[configured_option] = color_map[old_color]
+                    if canonical == "bg":
                         idle_bg = getattr(widget, "_chesssnip_idle_bg", None)
                         if idle_bg and idle_bg.lower() in color_map:
                             widget._chesssnip_idle_bg = color_map[idle_bg.lower()]
                 except (tk.TclError, TypeError):
                     continue
-            if isinstance(widget, tk.Canvas):
+            if updates:
+                widget.configure(**updates)
+            if isinstance(widget, ModernSlider):
+                widget._redraw()
+            elif isinstance(widget, tk.Canvas) and widget is self.canvas:
+                # The editor canvas can contain thousands of annotation items.
+                # Its marks keep their chosen colors; only these two items use
+                # the application theme and need an update.
+                try:
+                    widget.itemconfigure(
+                        "preview-frame", fill=widget.cget("bg"), outline=EDGE,
+                    )
+                    widget.itemconfigure("size-badge", fill=MUTED)
+                except tk.TclError:
+                    pass
+            elif isinstance(widget, tk.Canvas):
                 for item in widget.find_all():
                     for option in ("fill", "outline"):
                         try:
@@ -1554,10 +2338,58 @@ class ChessSnip:
                                 widget.itemconfigure(item, **{option: color_map[old_color]})
                         except tk.TclError:
                             pass
+            theme_refresh = getattr(widget, "_chesssnip_theme_refresh", None)
+            if callable(theme_refresh):
+                try:
+                    theme_refresh()
+                except (AttributeError, OSError, tk.TclError, TypeError, ValueError):
+                    pass
             for child in widget.winfo_children():
                 self._recolor_theme_tree(child, color_map)
         except tk.TclError:
             pass
+
+    def _refresh_preview_matte(self):
+        """Refresh only cached overlays that flatten transparent preview margins."""
+        try:
+            source = self._preview_source_cache
+            item = getattr(self, "_preview_canvas_item", None)
+            if (
+                not self.image or source is None or item is None
+                or not self.canvas.type(item)
+                or not self._preview_has_transparency
+            ):
+                return
+            if self.tool.get() == "crop":
+                self._crop_preview_base = None
+                self._crop_dimmed_preview = None
+                self._render_crop_overlay()
+            elif self._recognition_regions:
+                width, height = self.image_display_size
+                resized = source.resize((width, height), Image.Resampling.LANCZOS)
+                self._recognition_base_preview = self._image_as_rgb(
+                    resized, self._editor_canvas_rgb(),
+                )
+                self._render_recognition_selection()
+        except (AttributeError, OSError, tk.TclError, TypeError, ValueError):
+            pass
+
+    def _refresh_antialiased_button_surfaces(self):
+        """Rebuild cached button corners after parent theme colors change."""
+        pending = [self.root]
+        while pending:
+            widget = pending.pop()
+            try:
+                if not widget.winfo_exists():
+                    continue
+                if (
+                    getattr(widget, "_chesssnip_aa_button_ready", False)
+                    and widget.winfo_ismapped()
+                ):
+                    self._queue_button_surface_refresh(widget, invalidate=True)
+                pending.extend(widget.winfo_children())
+            except tk.TclError:
+                continue
 
     def _apply_dwm_theme_colors(self):
         try:
@@ -1567,19 +2399,26 @@ class ChessSnip:
             dwm = ctypes.windll.dwmapi.DwmSetWindowAttribute
             dwm.argtypes = (wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD)
             dwm.restype = ctypes.c_long
-            stack = [self.root]
             seen = set()
             color = wintypes.DWORD(_colorref(INK))
-            while stack:
-                widget = stack.pop()
+            windows = [self.root]
+            windows.extend(
+                window for window in getattr(self, "_chess_review_windows", ())
+                if window not in windows
+            )
+            windows.extend(
+                child for child in self.root.winfo_children()
+                if isinstance(child, tk.Toplevel) and child not in windows
+            )
+            for widget in windows:
                 try:
-                    if isinstance(widget, (tk.Tk, tk.Toplevel)):
-                        hwnd = user32.GetAncestor(widget.winfo_id(), 2) or widget.winfo_id()
-                        if hwnd not in seen:
-                            seen.add(hwnd)
-                            dwm(hwnd, 34, ctypes.byref(color), ctypes.sizeof(color))
-                            dwm(hwnd, 35, ctypes.byref(color), ctypes.sizeof(color))
-                    stack.extend(widget.winfo_children())
+                    if not widget.winfo_exists():
+                        continue
+                    hwnd = user32.GetAncestor(widget.winfo_id(), 2) or widget.winfo_id()
+                    if hwnd not in seen:
+                        seen.add(hwnd)
+                        dwm(hwnd, 34, ctypes.byref(color), ctypes.sizeof(color))
+                        dwm(hwnd, 35, ctypes.byref(color), ctypes.sizeof(color))
                 except tk.TclError:
                     pass
         except Exception:
@@ -1717,11 +2556,20 @@ class ChessSnip:
 
     def _make_variant_tool(self, parent, group, label, choices, tooltip):
         variant = tk.StringVar(master=self.root, value=choices[0][0])
+        initial_icon_name = (
+            group if group in self._tool_icon_images
+            else choices[0][2] if len(choices[0]) > 2
+            else choices[0][0]
+        )
+        initial_icon = (
+            self._tool_icon_images[initial_icon_name]
+            if isinstance(initial_icon_name, str) else initial_icon_name
+        )
         slot = tk.Frame(parent, bg=PANEL, width=38, height=32)
         slot.pack(side="left", padx=(0, 2))
         slot.pack_propagate(False)
         button = tk.Button(
-            slot, text="▾", image=self._tool_icon_images[group], compound=tk.LEFT,
+            slot, text="▾", image=initial_icon, compound=tk.LEFT,
             command=lambda selected=group: self._popup_tool_variant_menu(selected),
             relief="flat", bd=0, padx=2, pady=2, cursor="hand2",
             font=("Segoe UI", 8),
@@ -1734,24 +2582,161 @@ class ChessSnip:
         self._add_tooltip(button, tooltip)
 
     def _popup_tool_variant_menu(self, group):
+        if group == "shapes":
+            return self._popup_shapes_menu()
         button = self._tool_variant_buttons[group][0]
         tooltip = getattr(button, "_chesssnip_tooltip", None)
         if tooltip:
             tooltip.hide()
+        choices = tuple(
+            (choice[0], choice[1], self._tool_icon_images.get(choice[2]))
+            if len(choice) > 2 and isinstance(choice[2], str)
+            else choice
+            for choice in self._tool_variant_choices[group]
+        )
         self._show_choice_popup(
-            button, self._tool_variant_choices[group],
+            button, choices,
             self._tool_variant_vars[group].get(),
             lambda mode: self._choose_tool_variant(group, mode),
         )
+
+    def _popup_shapes_menu(self):
+        button = self._tool_variant_buttons["shapes"][0]
+        tooltip = getattr(button, "_chesssnip_tooltip", None)
+        if tooltip:
+            tooltip.hide()
+        self._close_choice_popup(refresh_cursor=False, restore_suspended=False)
+        popup = tk.Frame(
+            self.root, bg=EDGE, bd=0, highlightthickness=1,
+            highlightbackground=EDGE, highlightcolor=EDGE,
+        )
+        popup._chesssnip_shape_menu = True
+        self._active_choice_popup = popup
+        body = tk.Frame(popup, bg=PANEL2, bd=0)
+        body.pack(fill="both", expand=True, padx=1, pady=1)
+        popup._chesssnip_popup_body = body
+        self._shape_popup_buttons = {}
+        shapes = ("rectangle", "circle", "line", "arrow", "cross", "tick")
+        popup._shape_menu_icon_images = {
+            shape: self._create_shape_menu_icon(shape, TEXT, size=32)
+            for shape in shapes
+        }
+        selected_shape = self._tool_variant_vars["shapes"].get()
+        for shape in shapes:
+            selected = shape == selected_shape
+            item = tk.Button(
+                body, image=popup._shape_menu_icon_images[shape],
+                command=lambda mode=shape: self._choose_shape_from_popup(mode),
+                bg=ACCENT if selected else PANEL2,
+                fg="white" if selected else TEXT,
+                activebackground=ACCENT if selected else EDGE,
+                activeforeground="white" if selected else TEXT,
+                relief="flat", bd=0, padx=6, pady=5, cursor="hand2",
+                takefocus=0,
+            )
+            item.pack(side="left", padx=(5 if shape == "rectangle" else 2, 2), pady=4)
+            self._shape_popup_buttons[shape] = item
+            tooltip = {"line": "Straight line"}.get(shape, shape.capitalize())
+            self._add_tooltip(item, tooltip)
+        tk.Frame(body, bg=EDGE, width=1, height=24).pack(
+            side="left", padx=5, pady=5,
+        )
+        fill = tk.Checkbutton(
+            body, text="Fill", variable=self.shape_fill_var,
+            command=self._toggle_shape_fill,
+            bg=PANEL2, fg=TEXT, selectcolor=ACCENT,
+            activebackground=EDGE, activeforeground=TEXT,
+            relief="flat", bd=0, padx=5, pady=5,
+            font=("Segoe UI", 10), cursor="hand2", takefocus=0,
+            state="disabled" if selected_shape not in ("rectangle", "circle") else "normal",
+        )
+        fill.pack(side="left", padx=(3, 9), pady=4)
+        self._shape_fill_checkbox = fill
+        popup.update_idletasks()
+        popup_width = max(240, popup.winfo_reqwidth())
+        popup_height = popup.winfo_reqheight()
+        x, y = self._dropdown_popup_origin(button, popup_width, popup_height)
+        self._animate_choice_popup(popup, x, y, popup_width, popup_height)
+
+    def _choose_shape_from_popup(self, shape):
+        self._tool_variant_vars["shapes"].set(shape)
+        fill_enabled = shape in ("rectangle", "circle")
+        if not fill_enabled:
+            self.shape_fill_var.set(False)
+        if self._shape_fill_checkbox is not None:
+            self._shape_fill_checkbox.configure(state="normal" if fill_enabled else "disabled")
+        filled = fill_enabled and self.shape_fill_var.get()
+        self.set_tool(shape + ("_filled" if filled else ""))
+        for name, button in self._shape_popup_buttons.items():
+            selected = name == shape
+            button.configure(
+                bg=ACCENT if selected else PANEL2,
+                fg="white" if selected else TEXT,
+                activebackground=ACCENT if selected else EDGE,
+                activeforeground="white" if selected else TEXT,
+            )
 
     def _choose_tool_variant(self, group, mode):
         self._close_choice_popup()
         self._tool_variant_vars[group].set(mode)
         self.set_tool(mode)
 
+    def _sync_shape_fill_to_selection(self, stroke):
+        tool = stroke.get("tool", "")
+        shape = tool.removesuffix("_filled")
+        if shape not in ("rectangle", "circle", "line", "arrow", "cross", "tick"):
+            return
+        self._tool_variant_vars["shapes"].set(shape)
+        fill_enabled = shape in ("rectangle", "circle")
+        self.shape_fill_var.set(fill_enabled and tool.endswith("_filled"))
+        if self._shape_fill_checkbox is not None:
+            self._shape_fill_checkbox.configure(
+                state="normal" if fill_enabled else "disabled",
+            )
+
+    def _toggle_shape_fill(self):
+        shape = self._tool_variant_vars["shapes"].get()
+        selected = self._selected_shape
+        selected_is_live = selected is not None and any(
+            stroke is selected for stroke in self.strokes
+        )
+        if selected_is_live:
+            selected_tool = selected.get("tool", "")
+            selected_shape = selected_tool.removesuffix("_filled")
+            if selected_shape in ("rectangle", "circle") and selected_shape == shape:
+                target_tool = selected_shape + ("_filled" if self.shape_fill_var.get() else "")
+                if selected_tool != target_tool:
+                    self._push_history()
+                    selected["tool"] = target_tool
+                    self._shape_color_edit_history_pushed = False
+                self._tool_variant_vars["shapes"].set(selected_shape)
+                self.set_tool(target_tool)
+                if selected_tool != target_tool:
+                    self._redraw_transformed_shape(selected)
+                    self._schedule_auto_clipboard()
+                return
+        if shape not in ("rectangle", "circle"):
+            self.shape_fill_var.set(False)
+            return
+        self.set_tool(shape + ("_filled" if self.shape_fill_var.get() else ""))
+
+    def _dropdown_popup_origin(self, anchor, popup_width, popup_height):
+        root_x, root_y = self.root.winfo_rootx(), self.root.winfo_rooty()
+        x = anchor.winfo_rootx() - root_x
+        if self.canvas.winfo_exists() and self.canvas.winfo_ismapped():
+            y = self.canvas.winfo_rooty() - root_y
+        else:
+            y = anchor.winfo_rooty() - root_y + anchor.winfo_height()
+        root_width, root_height = self.root.winfo_width(), self.root.winfo_height()
+        if x + popup_width > root_width:
+            x = max(0, root_width - popup_width)
+        if y + popup_height > root_height:
+            y = max(0, root_height - popup_height)
+        return x, y
+
     def _show_choice_popup(self, anchor, choices, selected, on_choose):
         """Show an in-window, modeless menu so canvas input never gets grabbed."""
-        self._close_choice_popup(refresh_cursor=False)
+        self._close_choice_popup(refresh_cursor=False, restore_suspended=False)
         popup = tk.Frame(
             self.root, bg=EDGE, bd=0, highlightthickness=1,
             highlightbackground=EDGE, highlightcolor=EDGE,
@@ -1759,23 +2744,27 @@ class ChessSnip:
         self._active_choice_popup = popup
         body = tk.Frame(popup, bg=PANEL2, bd=0)
         body.pack(fill="both", expand=True, padx=1, pady=1)
+        popup._chesssnip_popup_body = body
         for choice in choices:
             value, label = choice[:2]
             icon = choice[2] if len(choice) > 2 else None
             is_selected = value == selected
             button_options = dict(
-                text=("✓  " if is_selected else "   ") + label,
+                # The selected row is already distinguished by its fill. Keep
+                # the label clean so no font-dependent check glyph is needed.
+                text=label,
                 command=lambda choice=value: (self._close_choice_popup(), on_choose(choice)),
                 bg=ACCENT if is_selected else PANEL2,
                 fg="white" if is_selected else TEXT,
                 activebackground=ACCENT if is_selected else EDGE,
                 activeforeground="white" if is_selected else TEXT,
-                relief="flat", bd=0, anchor="w", padx=10, pady=6,
-                font=("Segoe UI", 9), cursor="hand2", takefocus=0,
+                relief="flat", bd=0, anchor="w", padx=10, pady=4,
+                font=("Segoe UI", 10), cursor="hand2", takefocus=0,
             )
             if icon:
-                button_options.update(image=icon, compound=tk.LEFT, padx=8)
+                button_options.update(image=icon, compound=tk.LEFT, padx=12)
             button = tk.Button(body, **button_options)
+            button._chesssnip_dropdown_entry = True
             button.pack(fill="x")
             if not is_selected:
                 button.bind(
@@ -1785,24 +2774,20 @@ class ChessSnip:
                     "<Leave>", lambda _e, item=button: item.configure(bg=PANEL2),
                 )
         popup.update_idletasks()
-        root_x, root_y = self.root.winfo_rootx(), self.root.winfo_rooty()
-        x = anchor.winfo_rootx() - root_x
-        y = anchor.winfo_rooty() - root_y + anchor.winfo_height()
-        popup_width = max(anchor.winfo_width(), popup.winfo_reqwidth(), 190)
+        popup_width = max(anchor.winfo_width(), popup.winfo_reqwidth(), 220)
         popup_height = popup.winfo_reqheight()
-        root_width, root_height = self.root.winfo_width(), self.root.winfo_height()
-        if x + popup_width > root_width:
-            x = max(0, root_width - popup_width)
-        if y + popup_height > root_height:
-            y = max(0, anchor.winfo_rooty() - root_y - popup_height)
+        x, y = self._dropdown_popup_origin(anchor, popup_width, popup_height)
         self._animate_choice_popup(popup, x, y, popup_width, popup_height)
 
     def _animate_choice_popup(self, popup, x, y, width, height):
-        """Unfold dropdowns quickly from their anchor instead of popping in."""
+        """Animate dropdowns without resizing their contents."""
         self._choice_popup_animating = True
         started = time.monotonic()
         duration = 0.11
-        popup.place(x=x, y=y + 4, width=width, height=1)
+        # Keep the final geometry from the first frame. Animating height causes
+        # Tk to resize every packed menu item and the image-backed button
+        # renderer then freezes those temporary sizes into its surfaces.
+        popup.place(x=x, y=y + 4, width=width, height=height)
         popup.lift()
 
         def animate():
@@ -1817,34 +2802,20 @@ class ChessSnip:
                     return
                 progress = min(1.0, (time.monotonic() - started) / duration)
                 eased = 1.0 - (1.0 - progress) ** 3
-                popup.place_configure(y=y + round(4 * (1.0 - eased)), height=max(1, round(height * eased)))
+                popup.place_configure(y=y + round(4 * (1.0 - eased)))
                 if progress < 1.0:
                     self._choice_popup_animation_after = self.root.after(10, animate)
                     return
 
                 self._choice_popup_animating = False
                 self._choice_popup_animation_after = None
-                pointer_x, pointer_y = self.root.winfo_pointerxy()
-                popup_left, popup_top = popup.winfo_rootx(), popup.winfo_rooty()
-                in_popup = (
-                    popup_left <= pointer_x < popup_left + popup.winfo_width()
-                    and popup_top <= pointer_y < popup_top + popup.winfo_height()
-                )
-                canvas_left, canvas_top = self.canvas.winfo_rootx(), self.canvas.winfo_rooty()
-                in_canvas = (
-                    self.canvas.winfo_exists() and self.canvas.winfo_ismapped()
-                    and canvas_left <= pointer_x < canvas_left + self.canvas.winfo_width()
-                    and canvas_top <= pointer_y < canvas_top + self.canvas.winfo_height()
-                )
-                if in_canvas and not in_popup:
-                    self._close_choice_popup()
             except tk.TclError:
                 self._choice_popup_animating = False
                 self._choice_popup_animation_after = None
 
         self._choice_popup_animation_after = self.root.after(0, animate)
 
-    def _close_choice_popup(self, refresh_cursor=True):
+    def _close_choice_popup(self, refresh_cursor=True, restore_suspended=True):
         if self._color_palette_close_after is not None:
             try:
                 self.root.after_cancel(self._color_palette_close_after)
@@ -1862,15 +2833,40 @@ class ChessSnip:
             self._choice_popup_animation_after = None
         self._choice_popup_animating = False
         self._active_choice_popup = None
+        if getattr(popup, "_chesssnip_shape_menu", False):
+            self._shape_popup_buttons = {}
+            self._shape_fill_checkbox = None
         if getattr(popup, "_chesssnip_color_palette", False):
             self.color_buttons.clear()
             self.hue_slider = None
             self.saturation_slider = None
             self.brightness_slider = None
+            self._shape_color_edit_history_pushed = False
         try:
             popup.destroy()
         except tk.TclError:
             pass
+        suspended = self._suspended_shape_popup
+        place = self._suspended_shape_popup_place
+        self._suspended_shape_popup = None
+        self._suspended_shape_popup_place = None
+        if suspended is not None:
+            if restore_suspended and place:
+                self._active_choice_popup = suspended
+                try:
+                    suspended.place(**place)
+                    suspended.lift()
+                except tk.TclError:
+                    self._active_choice_popup = None
+                    try:
+                        suspended.destroy()
+                    except tk.TclError:
+                        pass
+            else:
+                try:
+                    suspended.destroy()
+                except tk.TclError:
+                    pass
         if refresh_cursor:
             try:
                 self.root.after_idle(self._refresh_brush_cursor_from_pointer)
@@ -1878,34 +2874,14 @@ class ChessSnip:
                 pass
 
     def _choice_popup_motion(self, event):
-        popup = self._active_choice_popup
-        if popup is None or self._choice_popup_animating:
-            return
-        try:
-            if not popup.winfo_exists():
-                return
-            # Dropdowns are overlaid on the canvas. Keep them open while the
-            # pointer is inside the popup, even though the canvas is underneath.
-            popup_left, popup_top = popup.winfo_rootx(), popup.winfo_rooty()
-            if (popup_left <= event.x_root < popup_left + popup.winfo_width()
-                    and popup_top <= event.y_root < popup_top + popup.winfo_height()):
-                return
-            # Keep the color palette available while moving between swatches
-            # and the canvas; drawing/click-away handling still works normally.
-            if getattr(popup, "_chesssnip_color_palette", False):
-                return
-            if not self.canvas.winfo_exists() or not self.canvas.winfo_ismapped():
-                return
-            left, top = self.canvas.winfo_rootx(), self.canvas.winfo_rooty()
-            if (left <= event.x_root < left + self.canvas.winfo_width()
-                    and top <= event.y_root < top + self.canvas.winfo_height()):
-                self._close_choice_popup()
-        except tk.TclError:
-            pass
+        # Dropdowns stay open while the pointer moves over the canvas.
+        return
 
     def _choice_popup_click_away(self, event):
         popup = self._active_choice_popup
         if popup is None:
+            return
+        if getattr(popup, "_chesssnip_shape_menu", False):
             return
         widget = event.widget
         while widget is not None:
@@ -1916,6 +2892,8 @@ class ChessSnip:
 
     def _choice_popup_escape(self, _event):
         if self._active_choice_popup is not None:
+            if getattr(self._active_choice_popup, "_chesssnip_shape_menu", False):
+                return "break"
             self._close_choice_popup()
             return "break"
 
@@ -1944,14 +2922,20 @@ class ChessSnip:
         recognition_active = getattr(self, "_recognition_mode", False)
         group_modes = {
             "pen": ("pen", "highlighter"),
-            "rectangle": ("rectangle", "rectangle_filled"),
-            "circle": ("circle", "circle_filled"),
+            "shapes": (
+                "rectangle", "rectangle_filled", "circle", "circle_filled",
+                "line", "arrow", "cross", "tick",
+            ),
         }
         for n, b in self.tool_buttons.items():
             active = not recognition_active and self.tool.get() in group_modes.get(n, (n,))
             b.configure(bg=ACCENT if active else PANEL2, fg="white" if active else TEXT, activebackground=ACCENT if active else EDGE, activeforeground="white")
         for group, (button, label) in self._tool_variant_buttons.items():
-            button.configure(text="▾", image=self._tool_icon_images[group], compound=tk.LEFT)
+            icon_name = (
+                "shapes" if group == "shapes"
+                else self._tool_variant_vars[group].get()
+            )
+            button.configure(text="▾", image=self._tool_icon_images[icon_name], compound=tk.LEFT)
         if getattr(self, "pipette_button", None):
             active = not recognition_active and self.tool.get() == "eyedropper"
             self.pipette_button.configure(
@@ -1988,13 +2972,34 @@ class ChessSnip:
         annotation_tools = {
             "pen", "highlighter", "eraser",
             "rectangle", "rectangle_filled", "circle", "circle_filled",
+            "line", "arrow", "cross", "tick",
         }
+        shape_modes = {
+            "rectangle", "rectangle_filled", "circle", "circle_filled",
+            "line", "arrow", "cross", "tick",
+        }
+        if name in ("line", "arrow", "cross", "tick"):
+            self.shape_fill_var.set(False)
+            if self._shape_fill_checkbox is not None:
+                self._shape_fill_checkbox.configure(state="disabled")
+        elif name in ("rectangle", "rectangle_filled", "circle", "circle_filled"):
+            if self._shape_fill_checkbox is not None:
+                self._shape_fill_checkbox.configure(state="normal")
+        if self._active_choice_popup is not None and getattr(
+            self._active_choice_popup, "_chesssnip_shape_menu", False,
+        ) and name not in shape_modes:
+            self._close_choice_popup(refresh_cursor=False)
+        if name not in shape_modes:
+            self._selected_shape = None
+            self._shape_transform_drag = None
+            self.canvas.delete("shape-selection")
         previous = self.tool.get()
         if name == "crop" and previous != "crop":
             self._crop_return_tool = previous if previous not in ("eyedropper", "recognition", "crop") else "pen"
             self._crop_box = (0.0, 0.0, float(self.image.width), float(self.image.height)) if self.image else None
             self._crop_drag_fixed = None
             self._crop_drag_offset = None
+            self._crop_drag_edge = None
             if self.crop_actions:
                 self.crop_actions.pack(side="left", padx=(2, 4), before=self.crop_actions_separator)
                 self._enter_crop_ui_mode()
@@ -2004,7 +3009,12 @@ class ChessSnip:
         elif name in annotation_tools:
             self._eyedropper_return_tool = name
             for group, variants in self._tool_variant_labels.items():
-                if name in variants:
+                if group == "shapes":
+                    shape = name[:-7] if name.endswith("_filled") else name
+                    if shape in variants:
+                        self._tool_variant_vars[group].set(shape)
+                        self.shape_fill_var.set(name.endswith("_filled"))
+                elif name in variants:
                     self._tool_variant_vars[group].set(name)
         self.tool.set(name)
         drawing_cursor=name in ("pen", "highlighter", "eraser")
@@ -2018,14 +3028,18 @@ class ChessSnip:
         self._style_mode_buttons()
         messages = {
             "pen": "Draw with a round pen · hold Shift for a straight horizontal line",
-            "highlighter": "Drag to highlight · hold Shift to keep it horizontal",
+            "highlighter": "Drag to highlight with a broad marker stroke · hold Shift to keep it horizontal",
             "eraser": "Click or drag across marks to erase them · Ctrl+Z to undo",
             "rectangle": "Drag to draw an outlined rectangle",
             "rectangle_filled": "Drag to draw a filled rectangle",
             "circle": "Drag to draw an outlined circle",
             "circle_filled": "Drag to draw a filled circle",
-            "crop": "Drag a corner grip to adjust the crop · Accept to apply · Esc to cancel",
-            "eyedropper": "Click a pixel in the image to select its color",
+            "line": "Drag to draw a straight line",
+            "arrow": "Drag to draw an arrow",
+            "cross": "Drag to draw a cross",
+            "tick": "Drag to draw a tick",
+            "crop": "Drag a corner or edge to resize; drag inside to move · Accept to apply · Esc to cancel",
+            "eyedropper": "Hover to preview a screen color · click to copy its hex code · Esc to cancel",
         }
         self.status.set(messages[name])
         self._update_brush_cursor()
@@ -2033,11 +3047,155 @@ class ChessSnip:
             self._render_crop_overlay()
         if self._size_preview_items:
             self._show_size_preview()
+        if name == "eyedropper":
+            self._start_screen_pipette()
+
+    def _start_screen_pipette(self):
+        """Show a frozen desktop so the pipette can sample any visible pixel."""
+        overlay = None
+        try:
+            if self._active_choice_popup is not None:
+                self._close_choice_popup()
+            self.root.update_idletasks()
+            self.root.update()
+            try:
+                ctypes.windll.dwmapi.DwmFlush()
+            except Exception:
+                pass
+            time.sleep(0.08)
+            from PIL import ImageGrab
+            screenshot = ImageGrab.grab(all_screens=True).convert("RGB")
+            x0, y0 = self._virtual_origin()
+
+            overlay = tk.Toplevel(self.root)
+            overlay.overrideredirect(True)
+            overlay.attributes("-topmost", True)
+            overlay.geometry(f"{screenshot.width}x{screenshot.height}{x0:+d}{y0:+d}")
+            cursor_spec = f"@{self._create_pipette_cursor_file().as_posix()}"
+            overlay.configure(cursor=cursor_spec)
+            canvas = tk.Canvas(overlay, highlightthickness=0, cursor=cursor_spec, bd=0)
+            canvas.pack(fill="both", expand=True)
+            self._pipette_overlay = overlay
+            self._pipette_photo = ImageTk.PhotoImage(screenshot, master=canvas)
+            canvas.create_image(0, 0, image=self._pipette_photo, anchor="nw")
+
+            tip_items = None
+            tip_width, tip_height = 128, 38
+
+            def show_color_preview(event):
+                nonlocal tip_items
+                px = max(0, min(screenshot.width - 1, int(event.x)))
+                py = max(0, min(screenshot.height - 1, int(event.y)))
+                color = "#%02X%02X%02X" % screenshot.getpixel((px, py))
+                left = event.x + 18
+                top = event.y + 18
+                if left + tip_width > screenshot.width:
+                    left = event.x - tip_width - 18
+                if top + tip_height > screenshot.height:
+                    top = event.y - tip_height - 18
+                left = max(4, left)
+                top = max(4, top)
+                if tip_items is None:
+                    shadow = canvas.create_rectangle(
+                        2, 2, 3, 3, fill="#000000", outline="#000000",
+                        tags="pipette-preview",
+                    )
+                    background = canvas.create_rectangle(
+                        2, 2, 3, 3, fill=PANEL2, outline=EDGE, width=1,
+                        tags="pipette-preview",
+                    )
+                    swatch = canvas.create_rectangle(
+                        2, 2, 3, 3, outline=TEXT, width=1,
+                        tags="pipette-preview",
+                    )
+                    label = canvas.create_text(
+                        2, 2, text="", fill=TEXT, anchor="w",
+                        font=("Segoe UI Semibold", 10), tags="pipette-preview",
+                    )
+                    tip_items = shadow, background, swatch, label
+                shadow, background, swatch, label = tip_items
+                canvas.coords(shadow, left + 2, top + 2, left + tip_width + 2, top + tip_height + 2)
+                canvas.coords(background, left, top, left + tip_width, top + tip_height)
+                canvas.coords(swatch, left + 7, top + 7, left + 31, top + 31)
+                canvas.itemconfigure(swatch, fill=color)
+                canvas.coords(label, left + 40, top + tip_height / 2)
+                canvas.itemconfigure(label, text=color)
+                canvas.tag_raise("pipette-preview")
+                return color
+
+            def finish(color=None, copied=False):
+                try:
+                    overlay.grab_release()
+                except tk.TclError:
+                    pass
+                try:
+                    overlay.destroy()
+                except tk.TclError:
+                    pass
+                self._pipette_overlay = None
+                self._pipette_photo = None
+                self.root.deiconify()
+                self.root.lift()
+                self.root.focus_force()
+                return_tool = self._eyedropper_return_tool
+                if return_tool == "eyedropper":
+                    return_tool = "pen"
+                if color is not None:
+                    self.set_color(color)
+                self.set_tool(return_tool)
+                if copied and color is not None:
+                    self.status.set(f"Copied {color} to clipboard · ready to draw")
+                    self._show_pipette_copy_notice(color)
+                elif color is None:
+                    self.status.set("Color picking cancelled")
+                return "break"
+
+            def pick_color(event):
+                px = max(0, min(screenshot.width - 1, int(event.x)))
+                py = max(0, min(screenshot.height - 1, int(event.y)))
+                color = "#%02X%02X%02X" % screenshot.getpixel((px, py))
+                try:
+                    self.root.clipboard_clear()
+                    self.root.clipboard_append(color)
+                    self.root.update_idletasks()
+                except tk.TclError as exc:
+                    finish(color)
+                    self.status.set(f"Could not copy {color}: {exc}")
+                    return "break"
+                return finish(color, copied=True)
+
+            canvas.bind("<Motion>", show_color_preview)
+            canvas.bind("<ButtonPress-1>", pick_color)
+            overlay.bind("<Escape>", lambda _event: finish())
+            overlay.bind("<Alt-F4>", lambda _event: finish())
+            canvas.bind("<Escape>", lambda _event: finish())
+            overlay.focus_force()
+            overlay.grab_set()
+        except Exception as exc:
+            if overlay is not None:
+                try:
+                    overlay.destroy()
+                except tk.TclError:
+                    pass
+            self._pipette_overlay = None
+            self._pipette_photo = None
+            try:
+                self.root.deiconify()
+                self.root.lift()
+                self.root.focus_force()
+            except tk.TclError:
+                pass
+            return_tool = self._eyedropper_return_tool
+            if return_tool == "eyedropper":
+                return_tool = "pen"
+            self.set_tool(return_tool)
+            messagebox.showerror("Color picker", f"Could not read the desktop colors.\n\n{exc}", parent=self.root)
 
     def _leave_crop_mode(self):
         self._crop_box = None
         self._crop_drag_fixed = None
         self._crop_drag_offset = None
+        self._crop_drag_edge = None
         self._crop_start = None
         if self.crop_actions:
             self.crop_actions.pack_forget()
@@ -2142,6 +3300,60 @@ class ChessSnip:
             pass
         self._crop_toolbar_height_state = None
 
+    def _crop_hit_test(self, canvas_x, canvas_y):
+        if not self.image or not self._crop_box:
+            return None
+        left, top, right, bottom = self._crop_box
+        origin_x, origin_y = self.display_origin
+        scale = self.fit_scale
+        x1, y1 = origin_x + left * scale, origin_y + top * scale
+        x2, y2 = origin_x + right * scale, origin_y + bottom * scale
+        corners = (
+            (x1, y1, right, bottom, "nw"),
+            (x2, y1, left, bottom, "ne"),
+            (x2, y2, left, top, "se"),
+            (x1, y2, right, top, "sw"),
+        )
+        nearest = min(
+            corners,
+            key=lambda item: (canvas_x - item[0]) ** 2 + (canvas_y - item[1]) ** 2,
+        )
+        if (canvas_x - nearest[0]) ** 2 + (canvas_y - nearest[1]) ** 2 <= 14 ** 2:
+            return ("corner", nearest[2], nearest[3], nearest[4])
+
+        edge_hits = []
+        if x1 + 14 <= canvas_x <= x2 - 14:
+            edge_hits.extend(((abs(canvas_y - y1), "top"), (abs(canvas_y - y2), "bottom")))
+        if y1 + 14 <= canvas_y <= y2 - 14:
+            edge_hits.extend(((abs(canvas_x - x1), "left"), (abs(canvas_x - x2), "right")))
+        edge_distance, edge_name = min(edge_hits, default=(float("inf"), None))
+        if edge_name is not None and edge_distance <= 12:
+            return ("edge", edge_name)
+
+        image_x = (canvas_x - origin_x) / scale
+        image_y = (canvas_y - origin_y) / scale
+        if left <= image_x <= right and top <= image_y <= bottom:
+            return ("move", image_x - left, image_y - top)
+        return None
+
+    def _set_crop_cursor(self, event):
+        if self.tool.get() != "crop":
+            return
+        canvas_x, canvas_y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+        hit = self._crop_hit_test(canvas_x, canvas_y)
+        if hit is None:
+            cursor = "crosshair"
+        elif hit[0] == "corner":
+            cursor = "size_ne_sw" if hit[3] in ("ne", "sw") else "size_nw_se"
+        elif hit[0] == "edge":
+            cursor = "sb_v_double_arrow" if hit[1] in ("top", "bottom") else "sb_h_double_arrow"
+        else:
+            cursor = "fleur"
+        try:
+            self.canvas.configure(cursor=cursor)
+        except tk.TclError:
+            self.canvas.configure(cursor="crosshair")
+
     def _update_crop_drag(self, event):
         if not self.image or not self._crop_box:
             return
@@ -2155,6 +3367,19 @@ class ChessSnip:
             new_left = max(0.0, min(float(self.image.width) - box_width, x - offset_x))
             new_top = max(0.0, min(float(self.image.height) - box_height, y - offset_y))
             self._crop_box = (new_left, new_top, new_left + box_width, new_top + box_height)
+        elif self._crop_drag_edge is not None:
+            edge = self._crop_drag_edge
+            min_width = min(8.0, float(self.image.width))
+            min_height = min(8.0, float(self.image.height))
+            if edge == "left":
+                left = min(max(0.0, x), right - min_width)
+            elif edge == "right":
+                right = max(min(float(self.image.width), x), left + min_width)
+            elif edge == "top":
+                top = min(max(0.0, y), bottom - min_height)
+            elif edge == "bottom":
+                bottom = max(min(float(self.image.height), y), top + min_height)
+            self._crop_box = (left, top, right, bottom)
         elif self._crop_drag_fixed is not None:
             fixed_x, fixed_y = self._crop_drag_fixed
             self._crop_box = (
@@ -2210,6 +3435,21 @@ class ChessSnip:
                 hx + handle_size, hy + handle_size,
                 fill="white", outline=edge, width=2, tags="crop-overlay",
             )
+        side_handle_width = 16
+        side_handle_height = 6
+        mid_x, mid_y = (x1 + x2) / 2, (y1 + y2) / 2
+        for hx, hy in ((mid_x, y1), (mid_x, y2)):
+            self.canvas.create_rectangle(
+                hx - side_handle_width / 2, hy - side_handle_height / 2,
+                hx + side_handle_width / 2, hy + side_handle_height / 2,
+                fill="white", outline=edge, width=2, tags="crop-overlay",
+            )
+        for hx, hy in ((x1, mid_y), (x2, mid_y)):
+            self.canvas.create_rectangle(
+                hx - side_handle_height / 2, hy - side_handle_width / 2,
+                hx + side_handle_height / 2, hy + side_handle_width / 2,
+                fill="white", outline=edge, width=2, tags="crop-overlay",
+            )
         self.canvas.tag_raise("crop-overlay")
         if self.size_badge:
             self.canvas.tag_raise(self.size_badge)
@@ -2261,6 +3501,17 @@ class ChessSnip:
     def set_color(self, color, hsv_state=None):
         color_changed = self.color.get().lower() != color.lower()
         self.color.set(color)
+        selected_shape = getattr(self, "_selected_shape", None)
+        selected_shape_is_live = selected_shape is not None and any(
+            stroke is selected_shape for stroke in getattr(self, "strokes", ())
+        )
+        if color_changed and selected_shape_is_live:
+            if not self._shape_color_edit_history_pushed:
+                self._push_history()
+                self._shape_color_edit_history_pushed = True
+            selected_shape["color"] = color
+            self._redraw_transformed_shape(selected_shape)
+            self._schedule_auto_clipboard()
         keep_hsv = hsv_state is not None or not color_changed
         try:
             if hsv_state is None:
@@ -2343,17 +3594,39 @@ class ChessSnip:
 
     def _popup_color_palette(self):
         if self._active_choice_popup is not None:
-            self._close_choice_popup(refresh_cursor=False)
+            if getattr(self._active_choice_popup, "_chesssnip_shape_menu", False):
+                shape_popup = self._active_choice_popup
+                place = shape_popup.place_info()
+                self._suspended_shape_popup_place = {
+                    "x": int(float(place.get("x", 0))),
+                    "y": int(float(place.get("y", 0))),
+                    "width": int(float(place.get("width", shape_popup.winfo_width()))),
+                    "height": int(float(place.get("height", shape_popup.winfo_height()))),
+                }
+                if self._choice_popup_animation_after is not None:
+                    try:
+                        self.root.after_cancel(self._choice_popup_animation_after)
+                    except tk.TclError:
+                        pass
+                    self._choice_popup_animation_after = None
+                self._choice_popup_animating = False
+                self._suspended_shape_popup = shape_popup
+                self._active_choice_popup = None
+                shape_popup.place_forget()
+            else:
+                self._close_choice_popup(refresh_cursor=False)
+        self._shape_color_edit_history_pushed = False
 
-        white = "#ffffff"
+        palette_surface = "#ffffff" if self.theme_name == "light" else PANEL2
         popup = tk.Frame(self.root, bg=PANEL, bd=0, highlightthickness=0)
         popup._chesssnip_color_palette = True
         self._active_choice_popup = popup
         backdrop = tk.Canvas(popup, bg=PANEL, highlightthickness=0, bd=0)
         backdrop.place(relx=0, rely=0, relwidth=1, relheight=1)
         popup._color_palette_backdrop = backdrop
-        body = tk.Frame(popup, bg=white, bd=0, padx=8, pady=8)
+        body = tk.Frame(popup, bg=palette_surface, bd=0, padx=8, pady=8)
         body.pack(fill="both", expand=True, padx=9, pady=9)
+        popup._chesssnip_popup_body = body
         self.color_buttons = {}
         self._selected_palette_swatch = next(
             (swatch for swatch in self._palette_color_names
@@ -2364,7 +3637,7 @@ class ChessSnip:
         for index, (color, name) in enumerate(self._palette_color_names.items()):
             selected = color.lower() == self.color.get().lower()
             swatch = tk.Canvas(
-                body, width=48, height=48, bg=white,
+                body, width=48, height=48, bg=palette_surface,
                 highlightthickness=0, bd=0, cursor="hand2",
             )
             icon = self._create_palette_swatch_icon(color, selected)
@@ -2379,39 +3652,39 @@ class ChessSnip:
             self._add_tooltip(swatch, f"Select {name.lower()} annotation color")
 
         color_rows = (len(self._palette_color_names) + columns - 1) // columns
-        hue_control = tk.Frame(body, bg=white)
+        hue_control = tk.Frame(body, bg=palette_surface)
         hue_control.grid(row=color_rows, column=0, columnspan=columns, sticky="ew", pady=(5, 1))
         tk.Label(
-            hue_control, text="HUE", bg=white, fg="#292c33",
+            hue_control, text="HUE", bg=palette_surface, fg=TEXT,
             font=("Segoe UI", 8, "bold"), width=12, anchor="w",
         ).pack(side="left", padx=(2, 5))
         self.hue_slider = ModernSlider(
             hue_control, self.hue, 0, 360, length=250,
             command=self._hue_slider_changed, hue_gradient=True,
-            background=white,
+            background=palette_surface,
         )
         self.hue_slider.pack(side="left", padx=(0, 2))
         self._add_tooltip(self.hue_slider, "Choose a hue")
 
-        saturation_control = tk.Frame(body, bg=white)
+        saturation_control = tk.Frame(body, bg=palette_surface)
         saturation_control.grid(row=color_rows + 1, column=0, columnspan=columns, sticky="ew", pady=(1, 0))
         tk.Label(
-            saturation_control, text="SAT", bg=white, fg="#292c33",
+            saturation_control, text="SAT", bg=palette_surface, fg=TEXT,
             font=("Segoe UI", 8, "bold"), width=12, anchor="w",
         ).pack(side="left", padx=(2, 5))
         self.saturation_slider = ModernSlider(
             saturation_control, self.saturation, 0, 100, length=250,
             command=self._saturation_slider_changed,
             saturation_gradient=True, gradient_hue=self.hue.get() / 360,
-            gradient_value=self.brightness.get() / 100, background=white,
+            gradient_value=self.brightness.get() / 100, background=palette_surface,
         )
         self.saturation_slider.pack(side="left", padx=(0, 2))
         self._add_tooltip(self.saturation_slider, "Set color saturation")
 
-        brightness_control = tk.Frame(body, bg=white)
+        brightness_control = tk.Frame(body, bg=palette_surface)
         brightness_control.grid(row=color_rows + 2, column=0, columnspan=columns, sticky="ew", pady=(1, 0))
         tk.Label(
-            brightness_control, text="BRIGHTNESS", bg=white, fg="#292c33",
+            brightness_control, text="BRIGHTNESS", bg=palette_surface, fg=TEXT,
             font=("Segoe UI", 8, "bold"), width=12, anchor="w",
         ).pack(side="left", padx=(2, 5))
         self.brightness_slider = ModernSlider(
@@ -2419,7 +3692,7 @@ class ChessSnip:
             command=self._brightness_slider_changed,
             brightness_gradient=True, gradient_hue=self.hue.get() / 360,
             gradient_saturation=self.saturation.get() / 100,
-            background=white,
+            background=palette_surface,
         )
         self.brightness_slider.pack(side="left", padx=(0, 2))
         self._add_tooltip(self.brightness_slider, "Set color brightness")
@@ -2430,7 +3703,7 @@ class ChessSnip:
         card = Image.new("RGBA", (card_width, card_height), (0, 0, 0, 0))
         ImageDraw.Draw(card).rounded_rectangle(
             (0, 0, card_width - 1, card_height - 1),
-            radius=30, fill=white, outline="#d9dce3", width=3,
+            radius=30, fill=palette_surface, outline=EDGE, width=3,
         )
         card_photo = ImageTk.PhotoImage(
             card.resize((card_width // 3, card_height // 3), Image.Resampling.LANCZOS),
@@ -2438,16 +3711,11 @@ class ChessSnip:
         )
         backdrop.create_image(0, 0, image=card_photo, anchor="nw")
         popup._color_palette_background_photo = card_photo
-        root_x, root_y = self.root.winfo_rootx(), self.root.winfo_rooty()
-        x = self.color_picker_button.winfo_rootx() - root_x
-        y = self.color_picker_button.winfo_rooty() - root_y + self.color_picker_button.winfo_height()
         popup_width = max(self.color_picker_button.winfo_width(), popup.winfo_reqwidth())
         popup_height = popup.winfo_reqheight()
-        root_width, root_height = self.root.winfo_width(), self.root.winfo_height()
-        if x + popup_width > root_width:
-            x = max(0, root_width - popup_width)
-        if y + popup_height > root_height:
-            y = max(0, self.color_picker_button.winfo_rooty() - root_y - popup_height)
+        x, y = self._dropdown_popup_origin(
+            self.color_picker_button, popup_width, popup_height,
+        )
         self._animate_choice_popup(popup, x, y, popup_width, popup_height)
 
     def _choose_palette_color(self, color):
@@ -2611,8 +3879,72 @@ class ChessSnip:
             draw.line((start, center, end, center), fill=(255, 255, 255, 255), width=scale)
             draw.line((center, start, center, end), fill=(255, 255, 255, 255), width=scale)
         bitmap = bitmap.resize((size, size), Image.Resampling.LANCZOS)
-        pixels = bitmap.tobytes("raw", "BGRA")
+        return self._create_native_cursor(bitmap, (size // 2, size // 2))
 
+    def _create_pipette_cursor_file(self, size=32):
+        """Write a native Windows cursor file so Tk can keep it stable."""
+        from PIL import ImageDraw
+        import struct
+
+        scale = 4
+        bitmap = Image.new("RGBA", (size * scale, size * scale), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(bitmap)
+
+        def point(x, y):
+            return round(x * scale), round(y * scale)
+
+        # A bright barrel with a dark edge stays legible over light and dark
+        # desktop areas. Its lower-left tip is the actual sampling hotspot.
+        draw.line((*point(6, 25), *point(23, 8)), fill="#101116", width=10 * scale)
+        draw.line((*point(6, 25), *point(23, 8)), fill="#F8F9FC", width=7 * scale)
+        draw.line((*point(7, 24), *point(22, 9)), fill="#536FC0", width=3 * scale)
+        draw.line((*point(4, 27), *point(8, 23)), fill="#101116", width=5 * scale)
+        draw.line((*point(4, 27), *point(8, 23)), fill="#F8F9FC", width=2 * scale)
+        draw.line((*point(19, 6), *point(26, 13)), fill="#101116", width=8 * scale)
+        draw.line((*point(19, 6), *point(26, 13)), fill="#D9DCE6", width=4 * scale)
+        draw.ellipse(
+            (19 * scale, 4 * scale, 28 * scale, 13 * scale),
+            fill="#F8F9FC", outline="#101116", width=2 * scale,
+        )
+        draw.ellipse((22 * scale, 6 * scale, 26 * scale, 10 * scale), fill="#536FC0")
+        bitmap = bitmap.resize((size, size), Image.Resampling.LANCZOS)
+        bgra = bitmap.tobytes("raw", "BGRA")
+        row_bytes = size * 4
+        xor_mask = b"".join(
+            bgra[row * row_bytes:(row + 1) * row_bytes]
+            for row in range(size - 1, -1, -1)
+        )
+        mask_row_bytes = ((size + 31) // 32) * 4
+        and_mask = bytearray(mask_row_bytes * size)
+        rgba = bitmap.tobytes("raw", "RGBA")
+        for output_row, source_y in enumerate(range(size - 1, -1, -1)):
+            for x in range(size):
+                alpha_offset = (source_y * size + x) * 4 + 3
+                if rgba[alpha_offset] == 0:
+                    and_mask[output_row * mask_row_bytes + x // 8] |= 0x80 >> (x % 8)
+
+        dib_header = struct.pack(
+            "<IiiHHIIiiII", 40, size, size * 2, 1, 32, 0,
+            len(xor_mask), 0, 0, 0, 0,
+        )
+        cursor_image = dib_header + xor_mask + bytes(and_mask)
+        cursor_header = struct.pack("<HHH", 0, 2, 1)
+        cursor_entry = struct.pack(
+            "<BBBBHHII", size, size, 0, 0, 4, 27,
+            len(cursor_image), 22,
+        )
+        cursor_path = Path(tempfile.gettempdir()) / "ChessSnip" / "pipette_cursor.cur"
+        cursor_path.parent.mkdir(parents=True, exist_ok=True)
+        cursor_path.write_bytes(cursor_header + cursor_entry + cursor_image)
+        return cursor_path
+
+    def _create_native_cursor(self, bitmap, hotspot):
+        """Turn an RGBA Pillow image into a Windows color cursor."""
+        bitmap = bitmap.convert("RGBA")
+        size, height = bitmap.size
+        if size != height:
+            raise ValueError("Windows cursors must be square")
+        pixels = bitmap.tobytes("raw", "BGRA")
         gdi32 = ctypes.windll.gdi32
         user32 = ctypes.windll.user32
         gdi32.CreateDIBSection.argtypes = (
@@ -2644,7 +3976,7 @@ class ChessSnip:
         if not mask_bitmap:
             gdi32.DeleteObject(color_bitmap)
             raise ctypes.WinError()
-        cursor_info = _ICONINFO(False, size // 2, size // 2, mask_bitmap, color_bitmap)
+        cursor_info = _ICONINFO(False, hotspot[0], hotspot[1], mask_bitmap, color_bitmap)
         try:
             cursor = user32.CreateIconIndirect(ctypes.byref(cursor_info))
             if not cursor:
@@ -2892,6 +4224,10 @@ class ChessSnip:
 
         def emergency_cancel_overlay(_event=None):
             try:
+                cv.grab_release()
+            except (NameError, tk.TclError):
+                pass
+            try:
                 release_capture_cursor()
             except Exception:
                 self._restore_system_cursor()
@@ -2960,10 +4296,11 @@ class ChessSnip:
             "Full screen": "Fullscreen",
             "Freeform": "Freeform",
         }
+        capture_mode_icons = self._create_capture_mode_icon_images("white")
         banner_texts = {
             "Rectangle": "Drag to select a region  ·  Release to capture  ·  Esc to cancel",
             "Window": "Hover over a window to highlight it  ·  Click to capture  ·  Esc to cancel",
-            "Full screen": "Click anywhere or press Enter to capture the full screen  ·  Esc to cancel",
+            "Full screen": "Capturing the full screen…",
             "Freeform": "Click and draw around an area  ·  Release to capture  ·  Esc to cancel",
         }
         # Keep the instruction at the top of the primary monitor, even when
@@ -2976,9 +4313,19 @@ class ChessSnip:
             font=("Segoe UI Semibold", 8), tags="banner",
         )
         overlay_mode_var = tk.StringVar(master=overlay, value=mode)
-        capture_toolbar_state = {"widget": None, "visible": True}
+        capture_toolbar_state = {
+            "widget": None, "visible": True,
+            "mode_menu": None, "mode_menu_visible": False,
+        }
+
+        def hide_capture_mode_menu():
+            menu = capture_toolbar_state["mode_menu"]
+            if menu is not None and capture_toolbar_state["mode_menu_visible"]:
+                menu.place_forget()
+                capture_toolbar_state["mode_menu_visible"] = False
 
         def hide_capture_toolbar():
+            hide_capture_mode_menu()
             toolbar = capture_toolbar_state["widget"]
             if toolbar is not None and capture_toolbar_state["visible"]:
                 toolbar.place_forget()
@@ -2987,8 +4334,62 @@ class ChessSnip:
         def update_capture_banner():
             cv.itemconfigure(banner, text=banner_texts[mode])
 
-        box = {"rect": None, "start": None, "window_hwnd": None, "points": []}
+        box = {
+            "rect": None, "start": None, "window_hwnd": None, "points": [],
+            "dragging": False, "mouse_poll_after": None, "grabbed": False,
+        }
         selection_preview = {"after": None, "photo": None, "item": None, "photo_size": None}
+
+        def capture_button_is_down():
+            try:
+                user32 = ctypes.windll.user32
+                user32.GetAsyncKeyState.argtypes = (ctypes.c_int,)
+                user32.GetAsyncKeyState.restype = ctypes.c_short
+                return bool(user32.GetAsyncKeyState(0x01) & 0x8000)
+            except Exception:
+                return False
+
+        def release_capture_grab():
+            if not box["grabbed"]:
+                return
+            try:
+                if overlay.grab_current() == cv:
+                    cv.grab_release()
+            except tk.TclError:
+                pass
+            box["grabbed"] = False
+
+        def stop_capture_drag():
+            box["dragging"] = False
+            pending = box["mouse_poll_after"]
+            if pending is not None:
+                try:
+                    overlay.after_cancel(pending)
+                except tk.TclError:
+                    pass
+                box["mouse_poll_after"] = None
+            release_capture_grab()
+
+        def poll_capture_button_release():
+            box["mouse_poll_after"] = None
+            if not box["dragging"]:
+                return
+            if capture_button_is_down():
+                box["mouse_poll_after"] = overlay.after(20, poll_capture_button_release)
+                return
+            if mode == "Window":
+                update_window_hover()
+            stop_capture_drag()
+            finish()
+
+        def start_capture_drag():
+            box["dragging"] = True
+            try:
+                cv.grab_set()
+                box["grabbed"] = True
+            except tk.TclError:
+                pass
+            box["mouse_poll_after"] = overlay.after(20, poll_capture_button_release)
 
         def refresh_selection_preview():
             selection_preview["after"] = None
@@ -3068,6 +4469,35 @@ class ChessSnip:
             if len(points) >= 3 and right - left >= 3 and bottom - top >= 3:
                 schedule_selection_preview()
 
+        def get_visible_window_bounds(hwnd):
+            """Return visible DWM frame bounds, excluding resize margins/shadow."""
+            bounds = wintypes.RECT()
+            try:
+                dwm = ctypes.windll.dwmapi
+                dwm.DwmGetWindowAttribute.argtypes = (
+                    wintypes.HWND, wintypes.DWORD,
+                    ctypes.POINTER(wintypes.RECT), wintypes.DWORD,
+                )
+                dwm.DwmGetWindowAttribute.restype = ctypes.c_long
+                # DWMWA_EXTENDED_FRAME_BOUNDS is the visible frame in screen
+                # coordinates; GetWindowRect also includes invisible resize
+                # borders on modern Windows.
+                if dwm.DwmGetWindowAttribute(
+                    hwnd, 9, ctypes.byref(bounds), ctypes.sizeof(bounds),
+                ) >= 0:
+                    return bounds.left, bounds.top, bounds.right, bounds.bottom
+            except Exception:
+                pass
+            try:
+                u = ctypes.windll.user32
+                u.GetWindowRect.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.RECT))
+                u.GetWindowRect.restype = wintypes.BOOL
+                if u.GetWindowRect(hwnd, ctypes.byref(bounds)):
+                    return bounds.left, bounds.top, bounds.right, bounds.bottom
+            except Exception:
+                pass
+            return None
+
         def find_window_at_pointer(event=None):
             """Find the topmost visible app window beneath the capture overlay."""
             try:
@@ -3108,11 +4538,20 @@ class ChessSnip:
                     u.GetClassNameW(hwnd, class_name, len(class_name))
                     if class_name.value in excluded_classes:
                         return True
-                    bounds = wintypes.RECT()
-                    if not u.GetWindowRect(hwnd, ctypes.byref(bounds)):
+                    coarse_bounds = wintypes.RECT()
+                    if not u.GetWindowRect(hwnd, ctypes.byref(coarse_bounds)):
                         return True
-                    if bounds.left <= px < bounds.right and bounds.top <= py < bounds.bottom:
-                        found["value"] = (hwnd, bounds.left, bounds.top, bounds.right, bounds.bottom)
+                    if not (
+                        coarse_bounds.left <= px < coarse_bounds.right
+                        and coarse_bounds.top <= py < coarse_bounds.bottom
+                    ):
+                        return True
+                    visible_bounds = get_visible_window_bounds(hwnd)
+                    if visible_bounds and (
+                        visible_bounds[0] <= px < visible_bounds[2]
+                        and visible_bounds[1] <= py < visible_bounds[3]
+                    ):
+                        found["value"] = (hwnd, *visible_bounds)
                         return False
                     return True
 
@@ -3180,8 +4619,10 @@ class ChessSnip:
                 finish()
                 return "break"
             if mode == "Window":
+                start_capture_drag()
                 update_window_hover(e)
                 return "break"
+            start_capture_drag()
             if mode == "Freeform":
                 box["start"] = None
                 box["rect"] = None
@@ -3220,6 +4661,9 @@ class ChessSnip:
             cv.create_text((a+c)/2, max(56,b-14), text=f"{c-a} × {d-b}", fill="white", font=("Segoe UI",10,"bold"), tags="selection")
             return "break"
         def finish(_=None):
+            if box["dragging"] and capture_button_is_down():
+                return "break"
+            stop_capture_drag()
             stop_selection_preview()
             release_capture_cursor()
             rect = box["rect"]
@@ -3230,13 +4674,22 @@ class ChessSnip:
                 overlay.withdraw()
                 def finish_window():
                     try:
-                        u=ctypes.windll.user32
-                        u.IsWindow.argtypes=[wintypes.HWND];u.IsWindow.restype=wintypes.BOOL
-                        u.GetWindowRect.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.RECT)];u.GetWindowRect.restype=wintypes.BOOL
-                        wr=wintypes.RECT()
-                        if selected_hwnd and u.IsWindow(selected_hwnd) and u.GetWindowRect(selected_hwnd,ctypes.byref(wr)):
-                            r=(max(0,wr.left-x0),max(0,wr.top-y0),min(shot.width,wr.right-x0),min(shot.height,wr.bottom-y0))
-                        else:r=rect
+                        u = ctypes.windll.user32
+                        u.IsWindow.argtypes = [wintypes.HWND]
+                        u.IsWindow.restype = wintypes.BOOL
+                        bounds = (
+                            get_visible_window_bounds(selected_hwnd)
+                            if selected_hwnd and u.IsWindow(selected_hwnd)
+                            else None
+                        )
+                        if bounds:
+                            r = (
+                                max(0, bounds[0] - x0), max(0, bounds[1] - y0),
+                                min(shot.width, bounds[2] - x0),
+                                min(shot.height, bounds[3] - y0),
+                            )
+                        else:
+                            r = rect
                         if r[2]-r[0]<3 or r[3]-r[1]<3:r=rect
                         self.image=shot.crop(r).convert("RGBA");self.strokes.clear();self.canvas_only_strokes.clear();self.history.clear();self.redo_history.clear();self._update_history_buttons();self.zoom_factor=1.0;self._rotation_angle=0;self._rotation_base_image=self.image.copy();self._rotation_base_angle=0;self.background_layer=Image.new("RGBA",self.image.size,(0,0,0,0));self.annotation_layer=Image.new("RGBA",self.image.size,(0,0,0,0));self._rotation_base_marks=self.annotation_layer.copy();self._set_rotation_value(0)
                         self._clear_recognition_regions()
@@ -3278,6 +4731,7 @@ class ChessSnip:
                 self.root.deiconify(); self.root.state("normal"); self.status.set("Capture cancelled · press New snip when ready")
             overlay.destroy()
         def cancel(_=None):
+            stop_capture_drag()
             stop_selection_preview()
             release_capture_cursor()
             self.root.deiconify(); self.root.state("normal"); self.status.set("Capture cancelled"); overlay.destroy()
@@ -3288,6 +4742,9 @@ class ChessSnip:
                 update_window_hover(e)
             else:
                 drag(e)
+            if box["dragging"] and capture_button_is_down():
+                return "break"
+            stop_capture_drag()
             finish()
             return "break"
 
@@ -3307,6 +4764,7 @@ class ChessSnip:
 
         def choose_overlay_capture_mode(selected_mode):
             nonlocal mode
+            hide_capture_mode_menu()
             mode = selected_mode
             self.capture_mode.set(selected_mode)
             self._update_mode_label()
@@ -3321,31 +4779,69 @@ class ChessSnip:
             selection_preview["photo"] = None
             selection_preview["item"] = None
             selection_preview["photo_size"] = None
-            capture_mode_button.configure(text=mode_labels[selected_mode])
+            capture_mode_button.configure(
+                image=capture_mode_icons[selected_mode],
+                text=f"{mode_labels[selected_mode]}  ▾", compound=tk.LEFT,
+            )
+            for option, button in capture_mode_choice_buttons.items():
+                button.configure(bg="#625cf2" if option == selected_mode else "#2b2d38")
             update_capture_banner()
+            if selected_mode == "Full screen":
+                overlay.after_idle(finish)
 
         capture_toolbar = tk.Frame(
             overlay, bg="#252630", bd=0, padx=5, pady=5,
             highlightthickness=1, highlightbackground="#555766",
         )
         capture_toolbar_state["widget"] = capture_toolbar
-        capture_menu = tk.Menu(
-            capture_toolbar, tearoff=0, bg="#2b2d38", fg="#f4f4f7",
-            activebackground="#625cf2", activeforeground="white",
-            selectcolor="#41424f", bd=0, relief="flat",
-            font=("Segoe UI", 10),
+        capture_mode_menu = tk.Frame(
+            overlay, bg="#252630", bd=0,
+            highlightthickness=1, highlightbackground="#555766",
         )
-        for capture_mode in ("Rectangle", "Window", "Full screen", "Freeform"):
-            capture_menu.add_radiobutton(
-                label=mode_labels[capture_mode], variable=overlay_mode_var,
-                value=capture_mode,
-                command=lambda selected=capture_mode: choose_overlay_capture_mode(selected),
+        capture_toolbar_state["mode_menu"] = capture_mode_menu
+        capture_mode_choice_buttons = {}
+        for capture_mode in ("Rectangle", "Freeform", "Window", "Full screen"):
+            selected = capture_mode == mode
+            choice = tk.Button(
+                capture_mode_menu, text=mode_labels[capture_mode],
+                image=capture_mode_icons[capture_mode], compound=tk.LEFT, anchor="w",
+                command=lambda selected_mode=capture_mode: choose_overlay_capture_mode(selected_mode),
+                bg="#625cf2" if selected else "#2b2d38", fg="white",
+                activebackground="#454754", activeforeground="white",
+                relief="flat", bd=0, padx=10, pady=4,
+                font=("Segoe UI", 10), cursor="hand2", takefocus=0,
             )
-        capture_mode_button = tk.Menubutton(
-            capture_toolbar, text=mode_labels[mode], menu=capture_menu,
-            indicatoron=True, direction="below", bg="#343642", fg="white",
-            activebackground="#454754", activeforeground="white",
-            relief="flat", bd=0, padx=12, pady=6,
+            choice.pack(fill="x")
+            capture_mode_choice_buttons[capture_mode] = choice
+            choice.bind("<Enter>", lambda _event, button=choice: button.configure(bg="#454754"))
+            choice.bind(
+                "<Leave>",
+                lambda _event, button=choice, value=capture_mode: button.configure(
+                    bg="#625cf2" if overlay_mode_var.get() == value else "#2b2d38",
+                ),
+            )
+
+        def toggle_capture_mode_menu():
+            if capture_toolbar_state["mode_menu_visible"]:
+                hide_capture_mode_menu()
+                return
+            overlay.update_idletasks()
+            menu_x = capture_toolbar.winfo_rootx() - overlay.winfo_rootx()
+            menu_y = (
+                capture_toolbar.winfo_rooty() - overlay.winfo_rooty()
+                + capture_toolbar.winfo_height() + 4
+            )
+            menu_width = max(220, capture_mode_button.winfo_width(), capture_mode_menu.winfo_reqwidth())
+            capture_mode_menu.place(x=menu_x, y=menu_y, width=menu_width)
+            capture_mode_menu.lift()
+            capture_toolbar_state["mode_menu_visible"] = True
+
+        capture_mode_button = tk.Button(
+            capture_toolbar, text=f"{mode_labels[mode]}  ▾",
+            image=capture_mode_icons[mode], compound=tk.LEFT,
+            command=toggle_capture_mode_menu,
+            bg="#343642", fg="white", activebackground="#454754",
+            activeforeground="white", relief="flat", bd=0, padx=12, pady=6,
             font=("Segoe UI Semibold", 10), cursor="hand2",
         )
         capture_mode_button.pack(side="left", padx=(0, 5))
@@ -3362,6 +4858,8 @@ class ChessSnip:
         toolbar_rely = -y0 / shot.height
         capture_toolbar.place(relx=toolbar_relx, rely=toolbar_rely, y=27, anchor="n")
         capture_toolbar.lift()
+        if mode == "Full screen":
+            overlay.after_idle(finish)
 
     @staticmethod
     def _virtual_origin():
@@ -3394,17 +4892,17 @@ class ChessSnip:
         self.canvas.delete("size-preview")
         w,h=self.canvas.winfo_width(),self.canvas.winfo_height()
         cx,cy=self.canvas.canvasx(w/2),self.canvas.canvasy(h/2)
-        side=max(6.0,self.width.get()*self.fit_scale)
-        half=side/2
         tool = self.tool.get()
+        side=max(6.0,self._stroke_render_width(tool,self.width.get())*self.fit_scale)
+        half=side if tool == "highlighter" else side/2
         if tool == "highlighter":
             outer = self.canvas.create_line(
-                cx, cy-half-2, cx, cy+half+2, fill="#111318",
-                width=4, capstyle=tk.ROUND, tags="size-preview",
+                cx, cy-half, cx, cy+half, fill="#111318",
+                width=side+4, capstyle=tk.BUTT, tags="size-preview",
             )
             inner = self.canvas.create_line(
                 cx, cy-half, cx, cy+half, fill=self.color.get(),
-                width=2, capstyle=tk.ROUND, tags="size-preview",
+                width=side, capstyle=tk.BUTT, tags="size-preview",
             )
         else:
             square=tool in ("rectangle","rectangle_filled","crop")
@@ -3430,36 +4928,142 @@ class ChessSnip:
         self._size_preview_items=None
 
     @staticmethod
+    def _stroke_render_width(tool, width):
+        """Use the same size value for pen and highlighter; opacity defines highlighting."""
+        return max(1.0, float(width))
+
+    @staticmethod
+    def _stroke_width_for(stroke):
+        """Use a pre-scaled width for marks stored in canvas coordinates."""
+        if "render_width" in stroke:
+            return max(1.0, float(stroke["render_width"]))
+        return ChessSnip._stroke_render_width(
+            stroke.get("tool", "pen"), stroke.get("width", 1),
+        )
+
+    @staticmethod
+    def _is_vector_shape(tool):
+        return tool in (
+            "rectangle", "rectangle_filled", "circle", "circle_filled",
+            "line", "arrow", "cross", "tick",
+        )
+
+    @staticmethod
+    def _shape_local_bounds(stroke):
+        points = stroke.get("points", ())
+        if len(points) < 4:
+            return (0.0, 0.0, 0.0, 0.0)
+        x1, y1, x2, y2 = map(float, points[:4])
+        return min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
+
+    @staticmethod
+    def _rotate_shape_point(point, center, degrees):
+        angle = math.radians(degrees)
+        dx, dy = point[0] - center[0], point[1] - center[1]
+        return (
+            center[0] + dx * math.cos(angle) - dy * math.sin(angle),
+            center[1] + dx * math.sin(angle) + dy * math.cos(angle),
+        )
+
+    @staticmethod
+    def _shape_point_to_image(stroke, point):
+        left, top, right, bottom = ChessSnip._shape_local_bounds(stroke)
+        center = ((left + right) / 2, (top + bottom) / 2)
+        offset = stroke.get("offset", (0.0, 0.0))
+        rotated = ChessSnip._rotate_shape_point(
+            point, center, float(stroke.get("rotation", 0.0)),
+        )
+        return rotated[0] + offset[0], rotated[1] + offset[1]
+
+    @staticmethod
+    def _shape_point_to_local(stroke, point):
+        left, top, right, bottom = ChessSnip._shape_local_bounds(stroke)
+        center = ((left + right) / 2, (top + bottom) / 2)
+        offset = stroke.get("offset", (0.0, 0.0))
+        unshifted = (point[0] - offset[0], point[1] - offset[1])
+        return ChessSnip._rotate_shape_point(
+            unshifted, center, -float(stroke.get("rotation", 0.0)),
+        )
+
+    @staticmethod
     def _stroke_preview_patch(stroke, scale=1.0, origin=(0.0, 0.0), clip_bounds=None):
         """Render one antialiased stroke patch in canvas or image coordinates."""
         from PIL import ImageDraw
 
         raw = stroke.get("points", ())
         points = [
-            (float(raw[i]) * scale + origin[0], float(raw[i + 1]) * scale + origin[1])
+            (float(raw[i]), float(raw[i + 1]))
             for i in range(0, len(raw) - 1, 2)
         ]
         if not points:
             return None, 0, 0
 
         tool = stroke.get("tool", "pen")
-        width = max(1.0, float(stroke.get("width", 1)) * scale)
+        width = max(1.0, ChessSnip._stroke_width_for(stroke) * scale)
+        is_shape = ChessSnip._is_vector_shape(tool)
         if tool == "highlighter" and len(points) == 1:
             px, py = points[0]
-            half_length = max(8.0, 2.0 * float(stroke.get("width", 1))) * scale
+            half_length = max(8.0, width)
             points = [(px, py - half_length), (px, py + half_length)]
-        shape = tool in ("rectangle", "rectangle_filled", "circle", "circle_filled")
-        if shape:
-            points = points[:2]
+
+        shape_path = []
+        shape_segments = None
+        if is_shape:
             if len(points) < 2:
                 return None, 0, 0
-            x_values = (points[0][0], points[1][0])
-            y_values = (points[0][1], points[1][1])
-        else:
-            x_values = [point[0] for point in points]
-            y_values = [point[1] for point in points]
+            points = points[:2]
+            left, top, right, bottom = ChessSnip._shape_local_bounds(stroke)
+            center = ((left + right) / 2, (top + bottom) / 2)
+            rotation = float(stroke.get("rotation", 0.0))
+            offset = stroke.get("offset", (0.0, 0.0))
 
+            def transform(point):
+                rotated = ChessSnip._rotate_shape_point(point, center, rotation)
+                return (
+                    (rotated[0] + offset[0]) * scale + origin[0],
+                    (rotated[1] + offset[1]) * scale + origin[1],
+                )
+
+            if tool.startswith("rectangle"):
+                local_path = [(left, top), (right, top), (right, bottom), (left, bottom)]
+                shape_path = [transform(point) for point in local_path]
+            elif tool.startswith("circle"):
+                rx, ry = (right - left) / 2, (bottom - top) / 2
+                shape_path = [
+                    transform((center[0] + rx * math.cos(i * math.tau / 64),
+                              center[1] + ry * math.sin(i * math.tau / 64)))
+                    for i in range(64)
+                ]
+            elif tool == "cross":
+                local_segments = (
+                    ((left, top), (right, bottom)),
+                    ((right, top), (left, bottom)),
+                )
+                shape_segments = [
+                    [transform(point) for point in segment]
+                    for segment in local_segments
+                ]
+                shape_path = [point for segment in shape_segments for point in segment]
+            elif tool == "tick":
+                local_segments = ((
+                    (left, top + (bottom - top) * 0.55),
+                    (left + (right - left) * 0.36, bottom),
+                    (right, top),
+                ),)
+                shape_segments = [
+                    [transform(point) for point in segment]
+                    for segment in local_segments
+                ]
+                shape_path = shape_segments[0]
+            else:
+                shape_path = [transform(point) for point in points]
+            points = shape_path
+
+        x_values = [point[0] for point in points]
+        y_values = [point[1] for point in points]
         padding = width / 2 + 1.0
+        if tool == "arrow":
+            padding += max(14.0 * scale, width * 4.5)
         left = math.floor(min(x_values) - padding)
         top = math.floor(min(y_values) - padding)
         right = math.ceil(max(x_values) + padding) + 1
@@ -3473,9 +5077,6 @@ class ChessSnip:
         if patch_width <= 0 or patch_height <= 0:
             return None, 0, 0
 
-        # Keep preview rendering bounded. A 2x coverage mask smooths normal
-        # viewport-sized strokes while avoiding the large allocations caused
-        # by 3x supersampling on every pointer update.
         supersample = max(1, min(2, int(math.sqrt(3_000_000 / (patch_width * patch_height)))))
         coverage = Image.new("L", (patch_width * supersample, patch_height * supersample), 0)
         draw = ImageDraw.Draw(coverage)
@@ -3486,21 +5087,49 @@ class ChessSnip:
         def local(point):
             return ((point[0] - left) * supersample, (point[1] - top) * supersample)
 
-        if shape:
-            x1, y1 = local(points[0])
-            x2, y2 = local(points[1])
-            bounds = (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
+        if is_shape:
+            path = [local(point) for point in points]
             filled = tool.endswith("_filled")
-            fill = 255 if filled else None
-            if tool.startswith("rectangle"):
-                draw.rectangle(bounds, fill=fill, outline=255, width=scaled_width)
+            if tool.startswith(("rectangle", "circle")):
+                closed_path = path + [path[0]]
+                if filled:
+                    draw.polygon(path, fill=255)
+                draw.line(closed_path, fill=255, width=scaled_width, joint="curve")
+                # PIL's closed polyline can leave a hairline where its butt caps meet.
+                # Seal that start/end seam explicitly for rectangle and circle outlines.
+                half = scaled_width / 2
+                px, py = path[0]
+                draw.ellipse((px - half, py - half, px + half, py + half), fill=255)
+            elif tool == "line":
+                draw.line(path, fill=255, width=scaled_width)
+                half = scaled_width / 2
+                for px, py in (path[0], path[-1]):
+                    draw.ellipse((px - half, py - half, px + half, py + half), fill=255)
+            elif tool in ("cross", "tick"):
+                half = scaled_width / 2
+                for segment in shape_segments or (path,):
+                    local_segment = [local(point) for point in segment]
+                    draw.line(
+                        local_segment, fill=255, width=scaled_width, joint="curve",
+                    )
+                    for px, py in (local_segment[0], local_segment[-1]):
+                        draw.ellipse(
+                            (px - half, py - half, px + half, py + half), fill=255,
+                        )
             else:
-                draw.ellipse(bounds, fill=fill, outline=255, width=scaled_width)
+                start, end = path
+                dx, dy = end[0] - start[0], end[1] - start[1]
+                length = max(1.0, math.hypot(dx, dy))
+                ux, uy = dx / length, dy / length
+                head_length = min(length * 0.62, max(14.0 * scale * supersample, scaled_width * 4.5))
+                half_head = max(8.0 * scale * supersample, scaled_width * 2.6)
+                base = (end[0] - ux * head_length, end[1] - uy * head_length)
+                wing_a = (base[0] - uy * half_head, base[1] + ux * half_head)
+                wing_b = (base[0] + uy * half_head, base[1] - ux * half_head)
+                draw.line((start, base), fill=255, width=scaled_width)
+                draw.polygon((end, wing_a, wing_b), fill=255)
         else:
             local_points = [local(point) for point in points]
-            # Rasterize the path as a single connected stroke. Curved joins
-            # keep tight turns continuous without stamping a dab at every
-            # mouse sample.
             draw.line(local_points, fill=255, width=scaled_width, joint="curve")
             if tool in ("pen", "highlighter"):
                 half = scaled_width / 2
@@ -3508,8 +5137,6 @@ class ChessSnip:
                     draw.ellipse((px - half, py - half, px + half, py + half), fill=255)
 
         if supersample > 1:
-            # BOX computes pixel coverage directly and avoids the ringing
-            # artifacts that Lanczos can introduce around thin stroke edges.
             coverage = coverage.resize((patch_width, patch_height), Image.Resampling.BOX)
         patch = Image.new("RGBA", (patch_width, patch_height), (*color, 0))
         patch.putalpha(coverage.point(lambda value: (value * alpha + 127) // 255))
@@ -3535,14 +5162,287 @@ class ChessSnip:
         patch, left, top = self._stroke_preview_patch(stroke, scale, origin, clip)
         if patch is None:
             return None
+        if tags == "mark" and self._is_vector_shape(stroke.get("tool")):
+            shape_key = stroke.setdefault("shape_key", id(stroke))
+            tags = ("mark", f"shape-{shape_key}")
         photo = ImageTk.PhotoImage(patch, master=self.canvas)
         item = self.canvas.create_image(left, top, image=photo, anchor="nw", tags=tags)
         if tags == "active-mark":
             self._drawing_preview_photo = photo
             self._drawing_preview_item = item
+        elif isinstance(tags, tuple):
+            shape_tag = next((tag for tag in tags if str(tag).startswith("shape-")), None)
+            if shape_tag is not None:
+                self._shape_preview_photos_by_key[shape_tag] = photo
+            else:
+                self._shape_preview_photos.append(photo)
         else:
             self._shape_preview_photos.append(photo)
         return item
+
+    def _shape_selection_geometry(self, stroke):
+        tool = stroke.get("tool", "")
+        if tool in ("line", "arrow"):
+            local_handles = (
+                (float(stroke["points"][0]), float(stroke["points"][1])),
+                (float(stroke["points"][2]), float(stroke["points"][3])),
+            )
+            handles = []
+            for point in local_handles:
+                image_point = self._shape_point_to_image(stroke, point)
+                handles.append((
+                    self.display_origin[0] + image_point[0] * self.fit_scale,
+                    self.display_origin[1] + image_point[1] * self.fit_scale,
+                ))
+            start, end = handles
+            dx, dy = end[0] - start[0], end[1] - start[1]
+            length = max(1.0, math.hypot(dx, dy))
+            normal = (-dy / length, dx / length)
+            if normal[1] > 0:
+                normal = (-normal[0], -normal[1])
+            midpoint = ((start[0] + end[0]) / 2, (start[1] + end[1]) / 2)
+            rotate_handle = (midpoint[0] + normal[0] * 27,
+                             midpoint[1] + normal[1] * 27)
+            return local_handles, handles, rotate_handle
+
+        left, top, right, bottom = self._shape_local_bounds(stroke)
+        local_corners = ((left, top), (right, top), (right, bottom), (left, bottom))
+        corners = []
+        for point in local_corners:
+            image_point = self._shape_point_to_image(stroke, point)
+            corners.append((
+                self.display_origin[0] + image_point[0] * self.fit_scale,
+                self.display_origin[1] + image_point[1] * self.fit_scale,
+            ))
+        angle = math.radians(float(stroke.get("rotation", 0.0)))
+        top_mid = ((corners[0][0] + corners[1][0]) / 2,
+                   (corners[0][1] + corners[1][1]) / 2)
+        rotate_handle = (
+            top_mid[0] + math.sin(angle) * 27,
+            top_mid[1] - math.cos(angle) * 27,
+        )
+        return local_corners, corners, rotate_handle
+
+    def _render_shape_selection(self):
+        self.canvas.delete("shape-selection")
+        stroke = self._selected_shape
+        if not stroke or stroke not in self.strokes or not self._is_vector_shape(stroke.get("tool")):
+            return
+        _local_handles, handles, rotate_handle = self._shape_selection_geometry(stroke)
+        endpoint_shape = stroke.get("tool") in ("line", "arrow")
+        if not endpoint_shape:
+            path = [coordinate for point in (*handles, handles[0]) for coordinate in point]
+            self.canvas.create_line(
+                *path, fill=ACCENT, width=1.5, dash=(4, 3), tags="shape-selection",
+            )
+        for x, y in handles:
+            self.canvas.create_rectangle(
+                x - 5, y - 5, x + 5, y + 5,
+                fill="white", outline=ACCENT, width=1.5, tags="shape-selection",
+            )
+        if endpoint_shape:
+            start, end = handles
+            top_mid = ((start[0] + end[0]) / 2, (start[1] + end[1]) / 2)
+        else:
+            top_mid = ((handles[0][0] + handles[1][0]) / 2,
+                       (handles[0][1] + handles[1][1]) / 2)
+        self.canvas.create_line(
+            *top_mid, *rotate_handle, fill=ACCENT, width=1.5, tags="shape-selection",
+        )
+        self.canvas.create_oval(
+            rotate_handle[0] - 10, rotate_handle[1] - 10,
+            rotate_handle[0] + 10, rotate_handle[1] + 10,
+            fill="white", outline=ACCENT, width=1.5, tags="shape-selection",
+        )
+        self.canvas.create_text(
+            *rotate_handle, text="↻", fill=ACCENT, font=("Segoe UI Symbol", 12, "bold"),
+            tags="shape-selection",
+        )
+        self.canvas.tag_raise("shape-selection")
+
+    def _shape_selection_hit(self, event):
+        stroke = self._selected_shape
+        if not stroke or stroke not in self.strokes:
+            return None
+        _local_handles, handles, rotate_handle = self._shape_selection_geometry(stroke)
+        x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+        if math.hypot(x - rotate_handle[0], y - rotate_handle[1]) <= 13:
+            return ("rotate", None)
+        for index, (hx, hy) in enumerate(handles):
+            if math.hypot(x - hx, y - hy) <= 10:
+                return ("resize", index)
+        image_x, image_y = self._to_image(event.x, event.y)
+        if self._shape_move_hit(stroke, image_x, image_y):
+            return ("move", None)
+        return None
+
+    def _shape_move_hit(self, stroke, x, y):
+        local_x, local_y = self._shape_point_to_local(stroke, (x, y))
+        left, top, right, bottom = self._shape_local_bounds(stroke)
+        tool = stroke.get("tool", "")
+        if tool.startswith("rectangle"):
+            return left <= local_x <= right and top <= local_y <= bottom
+        if tool.startswith("circle"):
+            cx, cy = (left + right) / 2, (top + bottom) / 2
+            rx, ry = max((right - left) / 2, 0.5), max((bottom - top) / 2, 0.5)
+            return ((local_x - cx) / rx) ** 2 + ((local_y - cy) / ry) ** 2 <= 1
+        if tool in ("line", "arrow"):
+            return self._stroke_hit_at(stroke, x, y, max(5.0, self.width.get() * 1.5))
+        return self._stroke_hit_at(stroke, x, y, max(4.0, self.width.get()))
+
+    def _set_shape_selection_cursor(self, event):
+        if self.tool.get() not in (
+            "rectangle", "rectangle_filled", "circle", "circle_filled",
+            "line", "arrow", "cross", "tick",
+        ):
+            return
+        hit = self._shape_selection_hit(event)
+        cursor = "crosshair"
+        if hit:
+            if hit[0] == "rotate" or hit[0] == "move":
+                cursor = "fleur"
+            elif self._selected_shape and self._selected_shape.get("tool") in ("line", "arrow"):
+                cursor = "crosshair"
+            else:
+                cursor = "size_nw_se" if hit[1] in (0, 2) else "size_ne_sw"
+        try:
+            self.canvas.configure(cursor=cursor)
+        except tk.TclError:
+            pass
+
+    def _begin_shape_transform(self, mode, event, handle=None):
+        stroke = self._selected_shape
+        if not stroke:
+            return
+        x, y = self._to_image(event.x, event.y)
+        left, top, right, bottom = self._shape_local_bounds(stroke)
+        center = ((left + right) / 2, (top + bottom) / 2)
+        rotation = float(stroke.get("rotation", 0.0))
+        offset = tuple(stroke.get("offset", (0.0, 0.0)))
+        local_corners = ((left, top), (right, top), (right, bottom), (left, bottom))
+        fixed_local = None
+        if mode == "resize":
+            if stroke.get("tool") in ("line", "arrow"):
+                fixed_local = tuple(stroke["points"][(1 - handle) * 2:(1 - handle) * 2 + 2])
+            else:
+                fixed_local = local_corners[(handle + 2) % 4]
+        self._shape_transform_drag = {
+            "mode": mode, "stroke": stroke, "start": (x, y),
+            "points": list(stroke["points"]), "offset": offset,
+            "rotation": rotation, "center": center, "handle": handle,
+            "fixed_local": fixed_local, "history_pushed": False,
+        }
+        if mode == "rotate":
+            world_center = (center[0] + offset[0], center[1] + offset[1])
+            self._shape_transform_drag["start_angle"] = math.atan2(
+                y - world_center[1], x - world_center[0],
+            )
+        # Rebuild the base without this shape; the preview renderer draws the
+        # selected object above it as the live transform overlay.
+        self._render_preview()
+
+    def _update_shape_transform(self, event):
+        drag = self._shape_transform_drag
+        if not drag:
+            return
+        stroke = drag["stroke"]
+        x, y = self._to_image(event.x, event.y)
+        if math.hypot(x - drag["start"][0], y - drag["start"][1]) < 0.25:
+            return
+        if not drag["history_pushed"]:
+            self._push_history()
+            drag["history_pushed"] = True
+        mode = drag["mode"]
+        if mode == "move":
+            dx, dy = x - drag["start"][0], y - drag["start"][1]
+            stroke["offset"] = (drag["offset"][0] + dx, drag["offset"][1] + dy)
+        elif mode == "rotate":
+            center = drag["center"]
+            offset = drag["offset"]
+            world_center = (center[0] + offset[0], center[1] + offset[1])
+            angle = math.atan2(y - world_center[1], x - world_center[0])
+            delta = math.degrees(angle - drag["start_angle"])
+            stroke["rotation"] = drag["rotation"] + delta
+        else:
+            fixed = drag["fixed_local"]
+            original_center = drag["center"]
+            original_rotation = drag["rotation"]
+            unshifted = (x - drag["offset"][0], y - drag["offset"][1])
+            moving_local = self._rotate_shape_point(
+                unshifted, original_center, -original_rotation,
+            )
+            handle = drag["handle"]
+            original_points = drag["points"]
+            if stroke.get("tool") in ("line", "arrow"):
+                moving_index = handle
+                fixed_endpoint = drag["fixed_local"]
+                new_points = list(original_points)
+                new_points[moving_index * 2:moving_index * 2 + 2] = moving_local
+                stroke["points"] = new_points
+                fixed = fixed_endpoint
+            else:
+                moving = moving_local
+                if handle == 0:
+                    new_points = [moving[0], moving[1], fixed[0], fixed[1]]
+                elif handle == 1:
+                    new_points = [fixed[0], moving[1], moving[0], fixed[1]]
+                elif handle == 2:
+                    new_points = [fixed[0], fixed[1], moving[0], moving[1]]
+                else:
+                    new_points = [moving[0], fixed[1], fixed[0], moving[1]]
+                stroke["points"] = new_points
+            fixed_world_rotated = self._rotate_shape_point(
+                fixed, original_center, original_rotation,
+            )
+            fixed_world = (fixed_world_rotated[0] + drag["offset"][0],
+                           fixed_world_rotated[1] + drag["offset"][1])
+            left, top, right, bottom = self._shape_local_bounds(stroke)
+            new_center = ((left + right) / 2, (top + bottom) / 2)
+            rotated_anchor = self._rotate_shape_point(fixed, new_center, original_rotation)
+            stroke["offset"] = (fixed_world[0] - rotated_anchor[0],
+                                fixed_world[1] - rotated_anchor[1])
+            stroke["rotation"] = original_rotation
+        self._redraw_transformed_shape(stroke)
+
+    def _redraw_transformed_shape(self, stroke):
+        shape_key = stroke.setdefault("shape_key", id(stroke))
+        for canvas_stroke in self.canvas_only_strokes:
+            if canvas_stroke.get("shape_key") != shape_key:
+                continue
+            scale = canvas_stroke.get("canvas_scale", self.fit_scale)
+            origin_x, origin_y = canvas_stroke.get("canvas_origin", self.display_origin)
+            points = stroke["points"]
+            canvas_stroke["points"] = [
+                points[index] * scale + (origin_x if index % 2 == 0 else origin_y)
+                for index in range(len(points))
+            ]
+            offset = stroke.get("offset", (0.0, 0.0))
+            canvas_stroke["offset"] = (offset[0] * scale, offset[1] * scale)
+            canvas_stroke["rotation"] = stroke.get("rotation", 0.0)
+            canvas_stroke["tool"] = stroke.get("tool", canvas_stroke.get("tool", "rectangle"))
+            canvas_stroke["color"] = stroke.get("color", canvas_stroke.get("color", "#000000"))
+            break
+
+        drag = self._shape_transform_drag
+        if drag is not None and drag.get("stroke") is stroke:
+            self.canvas.delete("active-mark")
+            self._drawing_preview_photo = None
+            self._drawing_preview_item = None
+            self._draw_stroke_patch(stroke, "active-mark")
+            self._render_shape_selection()
+            if self.canvas_only_strokes:
+                self._render_canvas_only_overlay(
+                    max(100, self.canvas.winfo_width()), max(100, self.canvas.winfo_height()),
+                )
+            return
+
+        self._invalidate_preview_source()
+        self._render_preview()
+
+    def _invalidate_preview_source(self):
+        self._stroke_render_revision += 1
+        self._preview_source_cache_key = None
+        self._preview_source_cache = None
 
     def _render_preview(self):
         if not self.image: return
@@ -3556,41 +5456,67 @@ class ChessSnip:
         self.display_origin = (max((w-iw)//2,0), max((h-ih)//2,0))
         ox, oy = self.display_origin
         self.scroll_size=(max(w,ox+iw),max(h,oy+ih))
-        # Show transparent rotation corners over the editor's normal surface.
-        preview_source = self._compose_canvas_layers(
-            self.image, self.annotation_layer, self.background_layer, (),
+        # Render the screenshot and every committed mark in source-image space,
+        # then scale them together. Preview and export now use the same stroke
+        # renderer, so marks cannot vanish when canvas items are rebuilt.
+        excluded_shape = (
+            self._shape_transform_drag.get("stroke")
+            if self._shape_transform_drag else None
         )
+        preview_strokes = (
+            [stroke for stroke in self.strokes if stroke is not excluded_shape]
+            if excluded_shape is not None else self.strokes
+        )
+        cache_key = (
+            id(self.image), id(self.annotation_layer), id(self.background_layer),
+            id(self.strokes), self._stroke_render_revision,
+            id(excluded_shape) if excluded_shape is not None else None,
+        )
+        if cache_key != self._preview_source_cache_key:
+            self._preview_source_cache = self._compose_canvas_layers(
+                self.image, self.annotation_layer, self.background_layer, preview_strokes,
+            )
+            self._preview_source_cache_key = cache_key
+        preview_source = self._preview_source_cache
         editor_color = self._editor_canvas_rgb()
-        preview = self._image_as_rgb(
-            preview_source.resize((iw,ih), Image.Resampling.LANCZOS), editor_color,
+        preview_bitmap = preview_source.resize((iw, ih), Image.Resampling.LANCZOS)
+        preview, self._preview_has_transparency = self._image_as_rgb(
+            preview_bitmap, editor_color, return_transparency=True,
         )
         self._crop_preview_base = None
         self._crop_dimmed_preview = None
         self._crop_overlay_photo = None
         self._recognition_base_preview = preview
         self._recognition_selection_photos = []
-        self.photo = ImageTk.PhotoImage(preview)
+        # Preserve alpha so the canvas background can change themes without
+        # rerendering a potentially large screenshot and its annotation layers.
+        self.photo = ImageTk.PhotoImage(preview_bitmap, master=self.canvas)
         self.canvas.delete("all")
-        self._stroke_preview_tiles.clear()
-        self._drawing_live_tiles = None
-        self._drawing_rendered_point_count = 0
+        self._active_highlighter_overlay = None
         self._drawing_preview_item = None
         self._drawing_preview_photo = None
         self._shape_preview_photos = []
+        self._shape_preview_photos_by_key = {}
         self.brush_cursor_items = None
         self.canvas.configure(scrollregion=(0,0,*self.scroll_size))
         self.canvas.create_rectangle(
             ox-1,oy-1,ox+iw+1,oy+ih+1,
-            fill=self.canvas.cget("bg"), outline=EDGE,
+            fill=self.canvas.cget("bg"), outline=EDGE, tags="preview-frame",
         )
-        self.canvas.create_image(ox,oy,image=self.photo,anchor="nw",tags="preview")
-        for stroke in self.strokes:
-            self._draw_stroke_patch(stroke, "mark", clip_to_image=True)
+        self._preview_canvas_item = self.canvas.create_image(
+            ox, oy, image=self.photo, anchor="nw", tags="preview",
+        )
         self._render_canvas_only_overlay(w, h)
         self._render_recognition_overlay(scale, ox, oy)
         base_scale=min((w-42)/self.image.width,(h-42)/self.image.height,1.0)
         self.size_badge=self.canvas.create_text(self.canvas.canvasx(w-12),self.canvas.canvasy(12),text=f"{self.image.width} × {self.image.height} px · {round(scale/base_scale*100)}%",fill=MUTED,font=("Segoe UI",9),anchor="ne",tags="size-badge")
         self._render_crop_overlay()
+        self._rebuild_active_stroke_preview()
+        if self._shape_transform_drag is not None:
+            self._draw_stroke_patch(
+                self._shape_transform_drag["stroke"], "active-mark",
+            )
+        self._render_shape_selection()
         self._update_brush_cursor()
 
     def _render_recognition_overlay(self, scale, origin_x, origin_y):
@@ -4105,6 +6031,42 @@ class ChessSnip:
 
         self._recognition_copy_notice_after = self.root.after(1800, clear_notice)
 
+    def _show_pipette_copy_notice(self, color):
+        """Flash a small confirmation after the pipette copies a color."""
+        if not hasattr(self, "canvas") or not self.canvas.winfo_exists():
+            return
+        if self._pipette_copy_notice_after is not None:
+            try:
+                self.root.after_cancel(self._pipette_copy_notice_after)
+            except tk.TclError:
+                pass
+            self._pipette_copy_notice_after = None
+        self.canvas.delete("pipette-copy-notice")
+        center_x = self.canvas.canvasx(max(0, self.canvas.winfo_width()) / 2)
+        center_y = self.canvas.canvasy(max(24, self.canvas.winfo_height() - 28))
+        half_width, half_height = 69, 16
+        self.canvas.create_rectangle(
+            center_x - half_width, center_y - half_height,
+            center_x + half_width, center_y + half_height,
+            fill="#087e67", outline="#9af0d4", width=1,
+            tags="pipette-copy-notice",
+        )
+        self.canvas.create_text(
+            center_x, center_y, text=f"Copied {color}",
+            fill="#ffffff", font=("Segoe UI Semibold", 9),
+            tags="pipette-copy-notice",
+        )
+        self.canvas.tag_raise("pipette-copy-notice")
+
+        def clear_notice():
+            self._pipette_copy_notice_after = None
+            try:
+                self.canvas.delete("pipette-copy-notice")
+            except tk.TclError:
+                pass
+
+        self._pipette_copy_notice_after = self.root.after(1800, clear_notice)
+
     def _copy_recognition_or_image(self, _event=None):
         if not self._copy_selected_recognition():
             self.copy_image()
@@ -4283,7 +6245,13 @@ class ChessSnip:
 
     def _update_brush_cursor(self):
         brush_tools = ("pen", "highlighter", "eraser")
-        self.canvas.configure(cursor="arrow")
+        # Crop movement immediately installs its own edge/handle cursor. Resetting
+        # to an arrow here first makes Tk alternate visibly between both cursors.
+        if self.tool.get() not in (
+            "crop", "rectangle", "rectangle_filled", "circle", "circle_filled",
+            "line", "arrow", "cross", "tick",
+        ):
+            self.canvas.configure(cursor="arrow")
         recognition_kind = self._recognition_hover_kind()
         if self._recognition_mode:
             self.canvas.delete("brush-cursor")
@@ -4303,7 +6271,7 @@ class ChessSnip:
             self._restore_system_cursor()
             return
         x,y=self._pointer_canvas_pos
-        diameter=self.width.get()*self.fit_scale
+        diameter=self._stroke_render_width(self.tool.get(),self.width.get())*self.fit_scale
         radius=max(3,diameter/2)
         cursor_shape = (
             "rectangle" if self.tool.get() == "eraser"
@@ -4395,7 +6363,7 @@ class ChessSnip:
     def _stroke_extends_outside_image(self, stroke):
         points = stroke["points"]
         xs, ys = points[0::2], points[1::2]
-        margin = max(0.5, float(stroke["width"]) / 2)
+        margin = max(0.5, self._stroke_render_width(stroke["tool"], stroke["width"]) / 2)
         return (
             min(xs) - margin < 0
             or min(ys) - margin < 0
@@ -4408,10 +6376,15 @@ class ChessSnip:
         scale = stroke["canvas_scale"]
         origin_x, origin_y = stroke["canvas_origin"]
         points = stroke["points"]
+        offset = stroke.get("offset", (0.0, 0.0))
         return dict(
             stroke,
             points=[points[i] * scale + (origin_x if i % 2 == 0 else origin_y) for i in range(len(points))],
+            offset=(offset[0] * scale, offset[1] * scale),
             width=stroke["width"] * scale,
+            render_width=ChessSnip._stroke_render_width(stroke["tool"], stroke["width"]) * scale,
+            canvas_scale=scale,
+            canvas_origin=(origin_x, origin_y),
         )
 
     def _zoom_preview(self, event, direction=None):
@@ -4434,6 +6407,7 @@ class ChessSnip:
         self.canvas.xview_moveto(left/max(1,self.scroll_size[0]))
         self.canvas.yview_moveto(top/max(1,self.scroll_size[1]))
         self._render_canvas_only_overlay(max(100,self.canvas.winfo_width()),max(100,self.canvas.winfo_height()))
+        self._rebuild_active_stroke_preview()
         self._pointer_canvas_pos=(self.canvas.canvasx(event.x),self.canvas.canvasy(event.y))
         self._update_size_badge()
         self._update_brush_cursor()
@@ -4462,8 +6436,11 @@ class ChessSnip:
 
     def _stroke_hit_at(self, stroke, x, y, reach):
         points = stroke["points"]
-        stroke_reach = reach + stroke["width"] / 2
+        stroke_reach = reach + self._stroke_width_for(stroke) / 2
         tool = stroke["tool"]
+        is_shape = self._is_vector_shape(tool)
+        if is_shape:
+            x, y = self._shape_point_to_local(stroke, (x, y))
         if tool in ("rectangle_filled", "circle_filled") and len(points) >= 4:
             x1, y1, x2, y2 = points[:4]
             if tool == "rectangle_filled":
@@ -4477,19 +6454,51 @@ class ChessSnip:
         if tool in ("rectangle", "rectangle_filled") and len(points) >= 4:
             x1, y1, x2, y2 = points[:4]
             path = [(x1, y1), (x2, y1), (x2, y2), (x1, y2), (x1, y1)]
+            paths = [path]
         elif tool in ("circle", "circle_filled") and len(points) >= 4:
             x1, y1, x2, y2 = points[:4]
             cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
             rx, ry = abs(x2 - x1) / 2, abs(y2 - y1) / 2
             path = [
-                (cx + rx * math.cos(i * math.tau / 48), cy + ry * math.sin(i * math.tau / 48))
-                for i in range(49)
+                (cx + rx * math.cos(i * math.tau / 64), cy + ry * math.sin(i * math.tau / 64))
+                for i in range(65)
             ]
+            paths = [path]
+        elif tool in ("cross", "tick") and len(points) >= 4:
+            x1, y1, x2, y2 = points[:4]
+            left, right = min(x1, x2), max(x1, x2)
+            top, bottom = min(y1, y2), max(y1, y2)
+            if tool == "cross":
+                paths = [
+                    [(left, top), (right, bottom)],
+                    [(right, top), (left, bottom)],
+                ]
+            else:
+                paths = [[
+                    (left, top + (bottom - top) * 0.55),
+                    (left + (right - left) * 0.36, bottom),
+                    (right, top),
+                ]]
+        elif tool in ("line", "arrow") and len(points) >= 4:
+            start, end = (points[0], points[1]), (points[2], points[3])
+            path = [start, end]
+            if tool == "arrow":
+                dx, dy = end[0] - start[0], end[1] - start[1]
+                length = max(1.0, math.hypot(dx, dy))
+                ux, uy = dx / length, dy / length
+                head_length = min(length * 0.62, max(14.0, self._stroke_width_for(stroke) * 4.5))
+                half_head = max(8.0, self._stroke_width_for(stroke) * 2.6)
+                base = (end[0] - ux * head_length, end[1] - uy * head_length)
+                wing_a = (base[0] - uy * half_head, base[1] + ux * half_head)
+                wing_b = (base[0] + uy * half_head, base[1] - ux * half_head)
+                path.extend((wing_a, end, wing_b))
+            paths = [path]
         else:
             path = [tuple(points[i:i + 2]) for i in range(0, len(points) - 1, 2)]
+            paths = [path]
         return any(
             self._distance_to_segment(x, y, *a, *b) <= stroke_reach
-            for a, b in zip(path, path[1:])
+            for path in paths for a, b in zip(path, path[1:])
         )
 
     def _erase_at(self, x, y):
@@ -4501,7 +6510,7 @@ class ChessSnip:
         kept = []
 
         # Keep whole vector marks atomic: touching any part removes the entire
-        # line, rectangle, circle, or other drawn object.
+        # line, arrow, rectangle, circle, or other drawn object.
         for stroke in self.strokes:
             if self._stroke_hit_at(stroke, x, y, reach):
                 if not self._erase_changed:
@@ -4558,6 +6567,7 @@ class ChessSnip:
                         erased = True
 
         if erased:
+            self._invalidate_preview_source()
             self._render_preview()
             self.status.set("Annotation erased · Ctrl+Z to undo")
 
@@ -4806,23 +6816,6 @@ class ChessSnip:
         finally:
             self._rotation_slider_resetting = False
 
-    def reset_rotation(self):
-        if not self.image:
-            return
-        if self._rotation_drag:
-            self._cancel_rotation()
-        self._set_rotation_value(0)
-        if self._rotation_angle % 360:
-            self._begin_rotation()
-            self._rotation_drag["angle"] = -self._rotation_base_angle
-            self._rotation_drag["target"] = 0
-            self._rotation_drag["displayed"] = 0
-            self._finish_rotation()
-        else:
-            self._rotation_angle = 0
-            self._set_rotation_value(0)
-            self.status.set("Image is upright")
-
     def _finish_rotation(self):
         drag = self._rotation_drag
         if not drag:
@@ -4905,74 +6898,88 @@ class ChessSnip:
         self._pointer_canvas_pos=(self.canvas.canvasx(e.x),self.canvas.canvasy(e.y));self._update_brush_cursor()
         x,y = self._to_image(e.x,e.y)
         if self.tool.get() == "eyedropper":
-            if not (0 <= x < self.image.width and 0 <= y < self.image.height):
-                self.status.set("Pick a color from inside the image")
-                return
-            px,py=int(x),int(y)
-            picked=self._image_as_rgb(
-                self._composited(), self._editor_canvas_rgb(),
-            ).getpixel((px,py))
-            color="#%02x%02x%02x" % picked
-            return_tool=self._eyedropper_return_tool
-            self.set_color(color)
-            self.set_tool(return_tool)
-            self.status.set(f"Picked {color.upper()} · ready to draw")
-            return
+            return "break"
         if self.tool.get() == "crop":
             if not self._crop_box:
                 self._crop_box = (0.0, 0.0, float(self.image.width), float(self.image.height))
-            left, top, right, bottom = self._crop_box
-            ox, oy = self.display_origin
-            scale = self.fit_scale
-            corners = (
-                (left, top, right, bottom),
-                (right, top, left, bottom),
-                (right, bottom, left, top),
-                (left, bottom, right, top),
-            )
             cx, cy = self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)
-            nearest = min(
-                corners,
-                key=lambda corner: (cx - (ox + corner[0] * scale)) ** 2
-                + (cy - (oy + corner[1] * scale)) ** 2,
-            )
-            hx, hy = ox + nearest[0] * scale, oy + nearest[1] * scale
-            if (cx - hx) ** 2 + (cy - hy) ** 2 <= 14 ** 2:
-                self._crop_drag_fixed = (nearest[2], nearest[3])
-                self._crop_drag_offset = None
-            elif left <= x <= right and top <= y <= bottom:
-                self._crop_drag_fixed = None
-                self._crop_drag_offset = (x - left, y - top)
+            hit = self._crop_hit_test(cx, cy)
+            self._crop_drag_fixed = None
+            self._crop_drag_offset = None
+            self._crop_drag_edge = None
+            if hit and hit[0] == "corner":
+                self._crop_drag_fixed = (hit[1], hit[2])
+            elif hit and hit[0] == "edge":
+                self._crop_drag_edge = hit[1]
+            elif hit and hit[0] == "move":
+                self._crop_drag_offset = (hit[1], hit[2])
             return
+        if self._is_vector_shape(self.tool.get()):
+            hit = self._shape_selection_hit(e)
+            if hit:
+                self._begin_shape_transform(hit[0], e, hit[1])
+                return
+            if self._selected_shape and self._shape_move_hit(self._selected_shape, x, y):
+                self._begin_shape_transform("move", e)
+                return
+            target = next((stroke for stroke in reversed(self.strokes)
+                           if self._is_vector_shape(stroke.get("tool"))
+                           and self._shape_move_hit(stroke, x, y)), None)
+            if target is not None:
+                self._selected_shape = target
+                self._sync_shape_fill_to_selection(target)
+                self._render_shape_selection()
+                self._begin_shape_transform("move", e)
+                return
+            if self._selected_shape is not None:
+                self._selected_shape = None
+                self.canvas.delete("shape-selection")
+                active_tool = self.tool.get()
+                active_shape = active_tool.removesuffix("_filled")
+                if active_shape in ("rectangle", "circle", "line", "arrow", "cross", "tick"):
+                    self._tool_variant_vars["shapes"].set(active_shape)
+                    fill_enabled = active_shape in ("rectangle", "circle")
+                    self.shape_fill_var.set(fill_enabled and active_tool.endswith("_filled"))
+                    if self._shape_fill_checkbox is not None:
+                        self._shape_fill_checkbox.configure(
+                            state="normal" if fill_enabled else "disabled",
+                        )
+                return
         if self.tool.get()=="eraser":
             self._erasing=True;self._erase_changed=False;self._erase_at(x,y)
             return
         self._push_history()
-        self._drawing={"points":[x,y],"color":self.color.get(),"width":self.width.get(),"tool":self.tool.get(),"canvas_scale":self.fit_scale,"canvas_origin":tuple(self.display_origin)}
+        cx, cy = self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)
+        self._drawing={"points":[x,y],"canvas_points":[cx,cy],"color":self.color.get(),"width":self.width.get(),"tool":self.tool.get(),"canvas_scale":self.fit_scale,"canvas_origin":tuple(self.display_origin)}
         if self.tool.get() in ("pen", "highlighter"):
-            self._drawing_live_tiles = {}
-            self._drawing_rendered_point_count = 0
-            self._refresh_live_stroke_tiles(self._drawing)
+            self._refresh_active_stroke_preview()
             self._update_brush_cursor()
 
     def _draw_move(self,e):
         if self._recognition_motion(e):
             return
         self._pointer_canvas_pos=(self.canvas.canvasx(e.x),self.canvas.canvasy(e.y));self._update_brush_cursor()
+        if self._shape_transform_drag:
+            self._update_shape_transform(e)
+            self._set_shape_selection_cursor(e)
+            return
         if self._erasing:
             x,y=self._to_image(e.x,e.y)
             self._erase_at(x,y)
             return
         if self.tool.get() == "crop":
             self._update_crop_drag(e)
+            self._set_crop_cursor(e)
             return
         if not self._drawing:return
         drawing_tool=self._drawing["tool"]
         x,y=self._to_image(e.x,e.y)
+        cx, cy = self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)
         if drawing_tool in ("pen", "highlighter") and e.state & 0x0001:
             y=self._drawing["points"][1]
+            cy=self.display_origin[1]+y*self.fit_scale
         pts=self._drawing["points"]
-        if drawing_tool in ("rectangle", "rectangle_filled", "circle", "circle_filled"):
+        if self._is_vector_shape(drawing_tool):
             pts[:]=[pts[0],pts[1],x,y]
             self.canvas.delete("active-mark")
             self._drawing_preview_item = None
@@ -4980,132 +6987,222 @@ class ChessSnip:
             self._draw_stroke_patch(self._drawing, "active-mark")
             self._update_brush_cursor()
             return
-        pts.extend((x,y))
-        # Coalesce fast pointer events, then update only the small tiles crossed
-        # since the previous preview update.
+        last_x, last_y = pts[-2:]
+        canvas_points = self._drawing.setdefault("canvas_points", [])
+        last_cx, last_cy = canvas_points[-2:] if len(canvas_points) >= 2 else (
+            self.display_origin[0] + last_x * self.fit_scale,
+            self.display_origin[1] + last_y * self.fit_scale,
+        )
+        minimum_step = 0.35 if drawing_tool == "highlighter" else 0.75
+        if math.hypot(cx - last_cx, cy - last_cy) >= minimum_step:
+            pts.extend((x, y))
+            canvas_points.extend((cx, cy))
+        # Coalesce highlighter mask updates to a frame-sized interval; pen stays immediate.
         if self._drawing_preview_after is None:
-            self._drawing_preview_after = self.root.after(24, self._refresh_active_stroke_preview)
-
-    @staticmethod
-    def _live_stroke_tile_keys(start, end, radius, tile_size, clip):
-        left = max(min(start[0], end[0]) - radius, clip[0])
-        top = max(min(start[1], end[1]) - radius, clip[1])
-        right = min(max(start[0], end[0]) + radius, clip[2])
-        bottom = min(max(start[1], end[1]) + radius, clip[3])
-        if right < left or bottom < top:
-            return ()
-        first_x = math.floor(left / tile_size)
-        last_x = math.floor(right / tile_size)
-        first_y = math.floor(top / tile_size)
-        last_y = math.floor(bottom / tile_size)
-        return tuple(
-            (tile_x, tile_y)
-            for tile_y in range(first_y, last_y + 1)
-            for tile_x in range(first_x, last_x + 1)
-        )
-
-    def _paint_live_stroke_segment(self, drawing, start, end, dirty_tiles):
-        from PIL import ImageDraw
-
-        tile_size = 96
-        supersample = 2
-        canvas_width = max(1.0, float(drawing["width"]) * drawing["canvas_scale"])
-        pixel_width = max(1, round(canvas_width * supersample))
-        radius = canvas_width / 2 + 1
-        view = (
-            self.canvas.canvasx(0), self.canvas.canvasy(0),
-            self.canvas.canvasx(self.canvas.winfo_width()),
-            self.canvas.canvasy(self.canvas.winfo_height()),
-        )
-        for tile_key in self._live_stroke_tile_keys(start, end, radius, tile_size, view):
-            tile = self._drawing_live_tiles.get(tile_key)
-            if tile is None:
-                tile = {
-                    "mask": Image.new("L", (tile_size * supersample, tile_size * supersample), 0),
-                    "item": None,
-                    "photo": None,
-                }
-                self._drawing_live_tiles[tile_key] = tile
-            mask_draw = ImageDraw.Draw(tile["mask"])
-            tile_x, tile_y = tile_key
-
-            def local(point):
-                return (
-                    (point[0] - tile_x * tile_size) * supersample,
-                    (point[1] - tile_y * tile_size) * supersample,
-                )
-
-            a, b = local(start), local(end)
-            mask_draw.line((a, b), fill=255, width=pixel_width)
-            half = pixel_width / 2
-            for px, py in (a, b):
-                mask_draw.ellipse((px - half, py - half, px + half, py + half), fill=255)
-            dirty_tiles.add(tile_key)
-
-    def _refresh_live_stroke_tiles(self, drawing, *, finish=False):
-        from PIL import ImageDraw
-
-        if self._drawing_live_tiles is None:
-            self._drawing_live_tiles = {}
-            self._drawing_rendered_point_count = 0
-        points = drawing["points"]
-        point_count = len(points) // 2
-        if not point_count:
-            return
-        scale = float(drawing["canvas_scale"])
-        origin_x, origin_y = drawing["canvas_origin"]
-
-        def canvas_point(index):
-            return (
-                origin_x + float(points[index * 2]) * scale,
-                origin_y + float(points[index * 2 + 1]) * scale,
-            )
-
-        dirty_tiles = set()
-        rendered = self._drawing_rendered_point_count
-        if rendered == 0:
-            start = canvas_point(0)
-            self._paint_live_stroke_segment(drawing, start, start, dirty_tiles)
-            rendered = 1
-        for index in range(rendered - 1, point_count - 1):
-            self._paint_live_stroke_segment(
-                drawing, canvas_point(index), canvas_point(index + 1), dirty_tiles,
-            )
-        self._drawing_rendered_point_count = point_count
-        if finish:
-            end = canvas_point(point_count - 1)
-            self._paint_live_stroke_segment(drawing, end, end, dirty_tiles)
-
-        tile_size = 96
-        alpha = 128 if drawing["tool"] == "highlighter" else 255
-        alpha_lut = tuple((value * alpha + 127) // 255 for value in range(256))
-        for tile_key in dirty_tiles:
-            tile = self._drawing_live_tiles[tile_key]
-            coverage = tile["mask"].resize((tile_size, tile_size), Image.Resampling.BOX)
-            patch = Image.new("RGBA", (tile_size, tile_size), (*bytes.fromhex(drawing["color"].lstrip("#")), 0))
-            patch.putalpha(coverage.point(alpha_lut))
-            photo = ImageTk.PhotoImage(patch, master=self.canvas)
-            if tile["item"] is None:
-                tile_x, tile_y = tile_key
-                tile["item"] = self.canvas.create_image(
-                    tile_x * tile_size, tile_y * tile_size, image=photo,
-                    anchor="nw", tags="active-mark",
-                )
+            if drawing_tool == "highlighter":
+                self._drawing_preview_after = self.root.after(16, self._refresh_active_stroke_preview)
             else:
-                self.canvas.itemconfigure(tile["item"], image=photo)
-            tile["photo"] = photo
+                self._drawing_preview_after = self.root.after_idle(self._refresh_active_stroke_preview)
+
+    def _refresh_active_highlighter_preview(self, drawing):
+        """Render translucent highlighter tiles, updating only tiles touched by new path segments."""
+        tile_size = 128
+        supersample = 2
+        viewport_width = max(1, self.canvas.winfo_width())
+        viewport_height = max(1, self.canvas.winfo_height())
+        view_left = self.canvas.canvasx(0)
+        view_top = self.canvas.canvasy(0)
+        overlay = self._active_highlighter_overlay
+        if (
+            overlay is None
+            or overlay["size"] != (viewport_width, viewport_height)
+            or overlay["origin"] != (view_left, view_top)
+        ):
+            self.canvas.delete("active-mark")
+            mask = Image.new(
+                "L", (viewport_width * supersample, viewport_height * supersample), 0,
+            )
+            overlay = {
+                "mask": mask,
+                "draw": ImageDraw.Draw(mask),
+                "photos": {},
+                "origin": (view_left, view_top),
+                "size": (viewport_width, viewport_height),
+                "rendered_points": 1,
+            }
+            self._active_highlighter_overlay = overlay
+
+        raw_points = drawing.get("canvas_points", ())
+        points = [
+            (float(raw_points[i]), float(raw_points[i + 1]))
+            for i in range(0, len(raw_points) - 1, 2)
+        ]
+        if len(points) < 2:
+            return
+
+        width = max(
+            1.0,
+            self._stroke_render_width("highlighter", drawing["width"]) * self.fit_scale,
+        )
+        scaled_width = max(1, round(width * supersample))
+        half_width = width / 2 + 2
+        origin_x, origin_y = overlay["origin"]
+        touched_tiles = set()
+        first_segment = max(0, overlay["rendered_points"] - 1)
+        for index in range(first_segment, len(points) - 1):
+            start = points[index]
+            end = points[index + 1]
+            a = ((start[0] - origin_x) * supersample, (start[1] - origin_y) * supersample)
+            b = ((end[0] - origin_x) * supersample, (end[1] - origin_y) * supersample)
+            overlay["draw"].line(
+                (a, b), fill=255, width=scaled_width, joint="curve",
+            )
+            radius = scaled_width / 2
+            for px, py in (a, b):
+                overlay["draw"].ellipse(
+                    (px - radius, py - radius, px + radius, py + radius), fill=255,
+                )
+            left = max(0, math.floor(min(start[0], end[0]) - origin_x - half_width))
+            top = max(0, math.floor(min(start[1], end[1]) - origin_y - half_width))
+            right = min(viewport_width, math.ceil(max(start[0], end[0]) - origin_x + half_width))
+            bottom = min(viewport_height, math.ceil(max(start[1], end[1]) - origin_y + half_width))
+            if right <= left or bottom <= top:
+                continue
+            for tile_y in range(top // tile_size, (bottom - 1) // tile_size + 1):
+                for tile_x in range(left // tile_size, (right - 1) // tile_size + 1):
+                    touched_tiles.add((tile_x, tile_y))
+        overlay["rendered_points"] = len(points)
+
+        if not touched_tiles:
+            return
+        color = tuple(bytes.fromhex(drawing["color"].lstrip("#")))
+        alpha_lut = [round(value * 128 / 255) for value in range(256)]
+        for tile_x, tile_y in touched_tiles:
+            left = tile_x * tile_size
+            top = tile_y * tile_size
+            width_px = min(tile_size, viewport_width - left)
+            height_px = min(tile_size, viewport_height - top)
+            mask_tile = overlay["mask"].crop((
+                left * supersample,
+                top * supersample,
+                (left + width_px) * supersample,
+                (top + height_px) * supersample,
+            )).resize((width_px, height_px), Image.Resampling.BOX)
+            patch = Image.new("RGBA", (width_px, height_px), (*color, 0))
+            patch.putalpha(mask_tile.point(alpha_lut))
+            existing = overlay["photos"].get((tile_x, tile_y))
+            if existing:
+                existing[0].paste(patch)
+            else:
+                photo = ImageTk.PhotoImage(patch, master=self.canvas)
+                item = self.canvas.create_image(
+                    origin_x + left, origin_y + top, image=photo, anchor="nw",
+                    tags="active-mark",
+                )
+                overlay["photos"][(tile_x, tile_y)] = (photo, item)
+        self.canvas.tag_raise("active-mark")
 
     def _refresh_active_stroke_preview(self, *, finish=False):
+        """Update the live brush without rerasterizing its complete path."""
         self._drawing_preview_after = None
-        if not self._drawing:
+        drawing = self._drawing
+        if not drawing:
             return
-        self._refresh_live_stroke_tiles(self._drawing, finish=finish)
+        tool = drawing.get("tool")
+        if tool == "highlighter":
+            self._drawing_preview_item = None
+            self._drawing_preview_photo = None
+            self._refresh_active_highlighter_preview(drawing)
+            self._update_brush_cursor()
+            return
+        if self._is_vector_shape(tool):
+            self.canvas.delete("active-mark")
+            self._drawing_preview_item = None
+            self._drawing_preview_photo = None
+            self._draw_stroke_patch(drawing, "active-mark")
+            self._update_brush_cursor()
+            return
+
+        points = list(drawing.get("canvas_points", ()))
+        if len(points) < 2:
+            raw = drawing.get("points", ())
+            if len(raw) >= 2:
+                points = [
+                    self.display_origin[0] + raw[0] * self.fit_scale,
+                    self.display_origin[1] + raw[1] * self.fit_scale,
+                ]
+        if len(points) < 4:
+            self.canvas.delete("active-mark")
+            self._drawing_preview_item = None
+            self._drawing_preview_photo = None
+            if points:
+                x, y = points[:2]
+                radius = max(0.5, self._stroke_render_width(tool, drawing["width"]) * self.fit_scale / 2)
+                self._drawing_preview_item = self.canvas.create_oval(
+                    x-radius, y-radius, x+radius, y+radius,
+                    fill=drawing["color"], outline=drawing["color"], tags="active-mark",
+                )
+        else:
+            width = max(1.0, self._stroke_render_width(tool, drawing["width"]) * self.fit_scale)
+            if self._drawing_preview_item is None or self.canvas.type(self._drawing_preview_item) != "line":
+                self.canvas.delete("active-mark")
+                self._drawing_preview_item = self.canvas.create_line(
+                    *points, fill=drawing["color"], width=width,
+                    capstyle=tk.ROUND, joinstyle=tk.ROUND, smooth=False,
+                    tags="active-mark",
+                )
+            else:
+                self.canvas.coords(self._drawing_preview_item, *points)
+                self.canvas.itemconfigure(
+                    self._drawing_preview_item, fill=drawing["color"], width=width,
+                    capstyle=tk.ROUND, joinstyle=tk.ROUND,
+                )
+        self._drawing_preview_photo = None
+        self.canvas.tag_raise("active-mark")
         self._update_brush_cursor()
+
+    def _rebuild_active_stroke_preview(self):
+        """Reproject the active path after zooming or rebuilding the canvas."""
+        drawing = self._drawing
+        if not drawing:
+            return
+        if self._drawing_preview_after is not None:
+            try:
+                self.root.after_cancel(self._drawing_preview_after)
+            except tk.TclError:
+                pass
+            self._drawing_preview_after = None
+        drawing["canvas_scale"] = self.fit_scale
+        drawing["canvas_origin"] = tuple(self.display_origin)
+        if drawing["tool"] in ("pen", "highlighter"):
+            source_points = drawing["points"]
+            drawing["canvas_points"] = [
+                self.display_origin[0] + source_points[i] * self.fit_scale
+                if i % 2 == 0 else self.display_origin[1] + source_points[i] * self.fit_scale
+                for i in range(len(source_points))
+            ]
+            self._refresh_active_stroke_preview()
+        else:
+            self.canvas.delete("active-mark")
+            self._drawing_preview_item = None
+            self._drawing_preview_photo = None
+            if self._is_vector_shape(drawing["tool"]):
+                self._draw_stroke_patch(drawing, "active-mark")
 
     def _draw_end(self,e):
         if self._recognition_release(e):
             return
         self._pointer_canvas_pos=(self.canvas.canvasx(e.x),self.canvas.canvasy(e.y));self._update_brush_cursor()
+        if self._shape_transform_drag:
+            drag = self._shape_transform_drag
+            self._update_shape_transform(e)
+            self._shape_transform_drag = None
+            if drag["history_pushed"]:
+                self._invalidate_preview_source()
+                self._schedule_auto_clipboard()
+            self._render_preview()
+            self._set_shape_selection_cursor(e)
+            return
         if self._erasing:
             self._erasing = False
             if self._erase_changed:
@@ -5117,6 +7214,8 @@ class ChessSnip:
             self._update_crop_drag(e)
             self._crop_drag_fixed = None
             self._crop_drag_offset = None
+            self._crop_drag_edge = None
+            self._set_crop_cursor(e)
             return
         if self._drawing:
             drawing = self._drawing
@@ -5125,44 +7224,34 @@ class ChessSnip:
                 except tk.TclError:pass
                 self._drawing_preview_after = None
             drawing_tool = drawing["tool"]
-            if drawing_tool in ("rectangle", "rectangle_filled", "circle", "circle_filled"):
+            if self._is_vector_shape(drawing_tool):
                 x, y = self._to_image(e.x, e.y)
                 drawing["points"][:] = [drawing["points"][0], drawing["points"][1], x, y]
             elif drawing_tool in ("pen", "highlighter"):
                 x, y = self._to_image(e.x, e.y)
+                cx, cy = self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)
                 if e.state & 0x0001:
                     y = drawing["points"][1]
+                    cy = self.display_origin[1] + y * self.fit_scale
                 last_x, last_y = drawing["points"][-2:]
                 if math.hypot(x - last_x, y - last_y) > 0.25:
                     drawing["points"].extend((x, y))
+                    drawing.setdefault("canvas_points", []).extend((cx, cy))
             if len(self._drawing["points"])<4:
                 points = self._drawing["points"]
-                if drawing["tool"] == "highlighter":
-                    x, y = points[:2]
-                    half_length = max(8.0, 2.0 * float(drawing["width"]))
-                    points[:] = [x, y-half_length, x, y+half_length]
-                else:
-                    points.extend((points[0],points[1]))
-            live_stroke = drawing_tool in ("pen", "highlighter")
-            if live_stroke:
-                self._refresh_active_stroke_preview(finish=True)
+                points.extend((points[0], points[1]))
+            if self._is_vector_shape(drawing_tool):
+                drawing.setdefault("shape_key", id(drawing))
+            drawing.pop("canvas_points", None)
             if self._stroke_extends_outside_image(drawing):
                 self.canvas_only_strokes.append(self._stroke_to_canvas_space(drawing))
             self.strokes.append(drawing)
-            self._drawing=None
-            self._drawing_preview_item=None
-            self._drawing_preview_photo=None
-            if live_stroke:
-                self.canvas.addtag_withtag("mark", "active-mark")
-                self.canvas.dtag("active-mark", "active-mark")
-                self._stroke_preview_tiles[id(drawing)] = [
-                    tile["photo"] for tile in (self._drawing_live_tiles or {}).values()
-                    if tile["photo"] is not None
-                ]
-                self._drawing_live_tiles = None
-                self._drawing_rendered_point_count = 0
-            else:
-                self._render_preview()
+            self._selected_shape = drawing if self._is_vector_shape(drawing_tool) else None
+            self._drawing = None
+            self._drawing_preview_item = None
+            self._drawing_preview_photo = None
+            self._invalidate_preview_source()
+            self._render_preview()
             self._schedule_auto_clipboard()
 
     def _push_history(self):
@@ -5208,7 +7297,7 @@ class ChessSnip:
             try:
                 button.configure(
                     fg=TEXT if available else MUTED,
-                    state=tk.NORMAL if available else tk.DISABLED,
+                    state=tk.NORMAL,
                     disabledforeground=MUTED,
                 )
             except tk.TclError:
@@ -5237,6 +7326,8 @@ class ChessSnip:
 
     def _restore_history_snapshot(self, snapshot):
         self._clear_recognition_regions()
+        self._selected_shape = None
+        self._shape_transform_drag = None
         self.image,self.strokes,self._rotation_angle,self.zoom_factor,self._rotation_base_image,self._rotation_base_angle,self._rotation_base_marks,self.annotation_layer,self.background_layer,compact,self.canvas_only_strokes=snapshot
         if compact and self._rotation_base_image is not None:
             angle = self._rotation_angle - self._rotation_base_angle
@@ -5272,18 +7363,60 @@ class ChessSnip:
         self._restore_history_snapshot(self.redo_history.pop())
         self.status.set("Last undone change restored")
 
+    def _delete_selected_shape(self, event=None):
+        """Delete the active vector mark while leaving text editing alone."""
+        try:
+            focus = self.root.focus_get()
+            if focus is not None and focus.winfo_class() in {
+                "Entry", "TEntry", "Text", "Spinbox", "TSpinbox",
+                "TCombobox", "Listbox",
+            }:
+                return None
+        except tk.TclError:
+            pass
+
+        stroke = self._selected_shape
+        if (
+            stroke is None
+            or not self._is_vector_shape(stroke.get("tool"))
+            or not any(candidate is stroke for candidate in self.strokes)
+        ):
+            return None
+
+        self._push_history()
+        self.strokes = [candidate for candidate in self.strokes if candidate is not stroke]
+        shape_key = stroke.get("shape_key")
+        if shape_key is not None:
+            self.canvas_only_strokes = [
+                candidate for candidate in self.canvas_only_strokes
+                if candidate.get("shape_key") != shape_key
+            ]
+        self._selected_shape = None
+        self._shape_transform_drag = None
+        self.canvas.delete("shape-selection")
+        self._invalidate_preview_source()
+        self._render_preview()
+        self._schedule_auto_clipboard()
+        self.status.set("Selected shape deleted")
+        return "break"
+
     def _composited(self):
         return self._compose_canvas_layers(
             self.image, self.annotation_layer, self.background_layer, self.strokes,
         )
 
     @staticmethod
-    def _image_as_rgb(image, background=(255, 255, 255)):
+    def _image_as_rgb(image, background=(255, 255, 255), return_transparency=False):
         rgba = image.convert("RGBA")
-        if rgba.getchannel("A").getextrema()[0] < 255:
+        has_transparency = rgba.getchannel("A").getextrema()[0] < 255
+        if has_transparency:
             backdrop = Image.new("RGBA", rgba.size, (*background, 255))
-            return Image.alpha_composite(backdrop, rgba).convert("RGB")
-        return rgba.convert("RGB")
+            result = Image.alpha_composite(backdrop, rgba).convert("RGB")
+        else:
+            result = rgba.convert("RGB")
+        if return_transparency:
+            return result, has_transparency
+        return result
 
     @staticmethod
     def _trim_transparent(image):
@@ -5866,8 +7999,9 @@ class ChessSnip:
         brand.pack(side="left", padx=(14, 0))
         tk.Label(brand, text="♟", bg=ACCENT, fg="white", font=("Segoe UI Symbol", 12, "bold"), width=2, pady=1).pack(side="left", padx=(0, 9), pady=4)
         tk.Label(brand, text="ChessSnip  ·  Chess → PGN", bg=PANEL, fg=TEXT, font=("Segoe UI Semibold", 10)).pack(side="left")
-        title_controls = tk.Frame(titlebar, bg=PANEL)
+        title_controls = tk.Frame(titlebar, bg=PANEL, width=138, height=40)
         title_controls.pack(side="right", fill="y")
+        title_controls.pack_propagate(False)
 
         def minimize_review():
             try:
@@ -5883,11 +8017,13 @@ class ChessSnip:
 
         minimize_button = tk.Button(title_controls, text="—", command=minimize_review, bg=PANEL, fg=TEXT, activebackground=PANEL2, activeforeground=TEXT, relief="flat", bd=0, width=5, cursor="hand2", font=("Segoe UI", 11))
         minimize_button.pack(side="left", fill="y")
+        minimize_button._chesssnip_aa_fixed_size = (46, 38)
         self._bind_title_button_hover(minimize_button)
         self._add_tooltip(minimize_button, "Minimize the chess review")
         review_maximize = {"maximized": False, "restore_geometry": None}
         maximize_button = tk.Button(title_controls, text="□", bg=PANEL, fg=TEXT, activebackground=PANEL2, activeforeground=TEXT, relief="flat", bd=0, width=5, cursor="hand2", font=("Segoe UI", 11))
         maximize_button.pack(side="left", fill="y")
+        maximize_button._chesssnip_aa_fixed_size = (46, 38)
         self._bind_title_button_hover(maximize_button)
         self._add_tooltip(maximize_button, "Maximize or restore the chess review")
 
@@ -5913,7 +8049,8 @@ class ChessSnip:
         maximize_button.configure(command=toggle_review_maximize)
         close_button = tk.Button(title_controls, text="×", command=window.destroy, bg=PANEL, fg=TEXT, activebackground="#c42b1c", activeforeground="white", relief="flat", bd=0, width=5, cursor="hand2", font=("Segoe UI", 12))
         close_button.pack(side="left", fill="y")
-        self._bind_title_button_hover(close_button, "#c42b1c")
+        close_button._chesssnip_aa_fixed_size = (46, 38)
+        self._bind_title_button_hover(close_button, "#c42b1c", "white")
         self._add_tooltip(close_button, "Close the chess review")
 
         def activate_review_window():
@@ -6024,14 +8161,17 @@ class ChessSnip:
         right_header = tk.Frame(right, bg=INK)
         right_header.pack(fill="x", pady=(0, 6))
         tk.Label(right_header, text="RECOGNIZED PIECES", bg=INK, fg=MUTED, font=("Segoe UI", 8, "bold")).pack(side="left")
+        board_edit_controls = tk.Frame(right_header, bg=INK)
+        board_edit_controls.pack(side="left", padx=(8, 0))
         size = board_size
         piece_font_size = max(24, int(cell * .72))
         coordinate_margin = 18
         board_canvas = tk.Canvas(right, width=size + coordinate_margin, height=size + coordinate_margin, bg=INK, highlightthickness=0)
         board_canvas.pack(anchor="w")
-        self._add_tooltip(board_canvas, "Click a square to choose a piece · right-click also opens the piece menu")
+        self._add_tooltip(board_canvas, "Drag a piece or click it then an empty square to move it · right-click a square to place or remove a piece")
         rows = list(recognition["rows"])
         coordinate_orientation = tk.StringVar(value="black" if recognition.get("orientation_flipped") else "white")
+        board_flip_view = {"labels_flipped": False}
         glyphs = {"K":"♔", "Q":"♕", "R":"♖", "B":"♗", "N":"♘", "P":"♙", "k":"♚", "q":"♛", "r":"♜", "b":"♝", "n":"♞", "p":"♟"}
         turn = tk.StringVar(value="w")
 
@@ -6055,6 +8195,93 @@ class ChessSnip:
                 if force or right not in manually_set_castling:
                     castle_vars[right].set(suggestions[right])
 
+        position_history = []
+        position_history_index = 0
+        position_history_buttons = {"undo": None, "redo": None, "reset": None}
+        reset_position_icons = {}
+        reset_position_icon_art = {}
+
+        def position_state():
+            return (
+                tuple(rows),
+                tuple(castle_vars[right].get() for right in "KQkq"),
+            )
+
+        captured_position = position_state()
+        position_history.append(captured_position)
+
+        def update_position_history_buttons():
+            available = {
+                "undo": position_history_index > 0,
+                "redo": position_history_index + 1 < len(position_history),
+                "reset": position_state() != captured_position,
+            }
+            for name, enabled in available.items():
+                button = position_history_buttons.get(name)
+                if button is not None:
+                    try:
+                        if button.winfo_exists():
+                            # Tk stipples disabled button contents, producing
+                            # a mesh over glyphs and images. Keep the control
+                            # normal and visually mute it when it cannot act.
+                            face = PANEL2 if enabled and name != "reset" else INK
+                            icon_color = MUTED if enabled else EDGE
+                            button.configure(
+                                state=tk.NORMAL, bg=face, activebackground=face,
+                                fg=icon_color, activeforeground=icon_color,
+                            )
+                            button._position_action_available = enabled
+                            if name == "reset":
+                                set_reset_position_button_icon(icon_color)
+                    except tk.TclError:
+                        pass
+
+        def record_position_edit():
+            nonlocal position_history_index
+            state = position_state()
+            if state == position_history[position_history_index]:
+                update_position_history_buttons()
+                return
+            del position_history[position_history_index + 1:]
+            position_history.append(state)
+            position_history_index = len(position_history) - 1
+            update_position_history_buttons()
+
+        def apply_position_state(state):
+            saved_rows, saved_rights = state
+            rows[:] = list(saved_rows)
+            suggestions = infer_castling_rights()
+            manually_set_castling.clear()
+            for right, enabled in zip("KQkq", saved_rights):
+                castle_vars[right].set(enabled)
+                if enabled != suggestions[right]:
+                    manually_set_castling.add(right)
+            selected_square["position"] = None
+            draw_recognized_board()
+            update_position_history_buttons()
+
+        def undo_position_edit():
+            nonlocal position_history_index
+            if position_history_index <= 0:
+                return
+            position_history_index -= 1
+            apply_position_state(position_history[position_history_index])
+
+        def redo_position_edit():
+            nonlocal position_history_index
+            if position_history_index + 1 >= len(position_history):
+                return
+            position_history_index += 1
+            apply_position_state(position_history[position_history_index])
+
+        def reset_position():
+            nonlocal position_history_index
+            # Restore establishes a fresh baseline: previous edits cannot be
+            # replayed with Undo, and there are no stale Redo entries.
+            position_history[:] = [captured_position]
+            position_history_index = 0
+            apply_position_state(captured_position)
+
         halfmove = tk.StringVar(value="0")
         fullmove = tk.StringVar(value="1")
         fen_var = tk.StringVar()
@@ -6066,7 +8293,10 @@ class ChessSnip:
             # The visible pieces and the coordinate labels can be flipped
             # independently. Rotate the FEN rows only when their orientations
             # differ, so the notation matches the squares currently labeled.
-            coordinates_flipped = coordinate_orientation.get() == "black"
+            coordinates_flipped = (
+                (coordinate_orientation.get() == "black")
+                ^ board_flip_view["labels_flipped"]
+            )
             fen_rows = rows
             if bool(source_view["pieces_flipped"]) != coordinates_flipped:
                 fen_rows = [row[::-1] for row in reversed(rows)]
@@ -6084,7 +8314,10 @@ class ChessSnip:
             """Replace only coordinate labels, leaving the board art untouched."""
             board_canvas.delete("board-coordinate")
             board_left = coordinate_margin
-            coordinates_flipped = coordinate_orientation.get() == "black"
+            coordinates_flipped = (
+                (coordinate_orientation.get() == "black")
+                ^ board_flip_view["labels_flipped"]
+            )
             file_labels = "hgfedcba" if coordinates_flipped else "abcdefgh"
             rank_labels = "12345678" if coordinates_flipped else "87654321"
             for index, label in enumerate(file_labels):
@@ -6120,11 +8353,12 @@ class ChessSnip:
                     piece = rows[data_row][data_col]
                     if piece != "1":
                         text = glyphs[piece]
+                        piece_tag = f"board-piece-{data_row}-{data_col}"
                         if piece.isupper():
-                            board_canvas.create_text(x0 + cell / 2 + 1, y0 + cell / 2 + 2, text=text, fill="#373737", font=("Segoe UI Symbol", piece_font_size, "bold"))
-                            board_canvas.create_text(x0 + cell / 2, y0 + cell / 2, text=text, fill="#fffdf8", font=("Segoe UI Symbol", piece_font_size, "bold"))
+                            board_canvas.create_text(x0 + cell / 2 + 1, y0 + cell / 2 + 2, text=text, fill="#373737", font=("Segoe UI Symbol", piece_font_size, "bold"), tags=("board-piece", piece_tag))
+                            board_canvas.create_text(x0 + cell / 2, y0 + cell / 2, text=text, fill="#fffdf8", font=("Segoe UI Symbol", piece_font_size, "bold"), tags=("board-piece", piece_tag))
                         else:
-                            board_canvas.create_text(x0 + cell / 2, y0 + cell / 2, text=text, fill="#202027", font=("Segoe UI Symbol", piece_font_size, "bold"))
+                            board_canvas.create_text(x0 + cell / 2, y0 + cell / 2, text=text, fill="#202027", font=("Segoe UI Symbol", piece_font_size, "bold"), tags=("board-piece", piece_tag))
                     if selected_square["position"] == (data_row, data_col):
                         board_canvas.create_rectangle(
                             x0 + 2, y0 + 2, x0 + cell - 2, y0 + cell - 2,
@@ -6145,11 +8379,32 @@ class ChessSnip:
                 bind_review_key_scope(child)
 
         def dismiss_piece_picker(picker):
+            if piece_picker.get("window") is picker:
+                piece_picker["window"] = None
             try:
                 if picker.winfo_exists():
                     picker.destroy()
             except tk.TclError:
                 pass
+
+        def dismiss_piece_picker_on_review_click(event):
+            picker = piece_picker.get("window")
+            if picker is None:
+                return
+            widget = event.widget
+            while widget is not None:
+                if widget is picker:
+                    return
+                widget = getattr(widget, "master", None)
+            dismiss_piece_picker(picker)
+            if selected_square["position"] == pending_square.get("position"):
+                selected_square["position"] = None
+                draw_recognized_board()
+
+        window.bind_class(
+            review_key_tag, "<Button-1>",
+            dismiss_piece_picker_on_review_click, add="+",
+        )
 
         def place_piece(piece):
             position = pending_square.get("position")
@@ -6160,12 +8415,15 @@ class ChessSnip:
             mutable[col] = piece
             rows[row] = "".join(mutable)
             refresh_castling_suggestions()
+            selected_square["position"] = None
+            record_position_edit()
             draw_recognized_board()
             picker = piece_picker.get("window")
             if picker is not None:
                 dismiss_piece_picker(picker)
 
         def show_piece_picker(event, row, col):
+            bind_review_key_scope(window)
             old_picker = piece_picker.get("window")
             if old_picker is not None:
                 dismiss_piece_picker(old_picker)
@@ -6248,22 +8506,132 @@ class ChessSnip:
             bind_review_key_scope(picker)
             picker.focus_force()
 
-        def choose_square_piece(event):
+        def square_at_event(event):
             display_col = int((event.x - coordinate_margin) // cell)
             display_row = int(event.y // cell)
+            if not (0 <= display_col < 8 and 0 <= display_row < 8):
+                return None
             if source_view["pieces_flipped"]:
                 col, row = 7 - display_col, 7 - display_row
             else:
                 col, row = display_col, display_row
-            if not (0 <= col < 8 and 0 <= row < 8):
+            return row, col
+
+        def move_piece(source, destination):
+            if source is None or destination is None or source == destination:
+                return False
+            source_row, source_col = source
+            target_row, target_col = destination
+            piece = rows[source_row][source_col]
+            if piece == "1":
+                return False
+            source_values = list(rows[source_row])
+            source_values[source_col] = "1"
+            rows[source_row] = "".join(source_values)
+            target_values = list(rows[target_row])
+            target_values[target_col] = piece
+            rows[target_row] = "".join(target_values)
+            selected_square["position"] = None
+            refresh_castling_suggestions()
+            record_position_edit()
+            draw_recognized_board()
+            return True
+
+        move_gesture = {
+            "source": None, "start": None, "dragging": False,
+            "click_move_from": None, "click_destination": None,
+        }
+
+        def start_piece_move(event):
+            position = square_at_event(event)
+            if position is None:
                 return "break"
-            selected_square["position"] = (row, col)
+            row, col = position
+            piece = rows[row][col]
+            previously_selected = selected_square["position"]
+            move_gesture.update(
+                source=None, start=(event.x, event.y), dragging=False,
+                click_move_from=None, click_destination=None,
+            )
+            if piece == "1":
+                if previously_selected is not None and previously_selected != position:
+                    source_piece = rows[previously_selected[0]][previously_selected[1]]
+                    if source_piece != "1":
+                        move_gesture["click_move_from"] = previously_selected
+                        move_gesture["click_destination"] = position
+                return "break"
+
+            selected_square["position"] = position
+            move_gesture["source"] = position
+            move_gesture["piece"] = piece
+            draw_recognized_board()
+            return "break"
+
+        def drag_piece_move(event):
+            source = move_gesture["source"]
+            start = move_gesture["start"]
+            if source is None or start is None:
+                return
+            if not move_gesture["dragging"]:
+                if abs(event.x - start[0]) + abs(event.y - start[1]) < 6:
+                    return
+                move_gesture["dragging"] = True
+                board_canvas.itemconfigure(
+                    f"board-piece-{source[0]}-{source[1]}", state="hidden",
+                )
+                piece = move_gesture["piece"]
+                glyph = glyphs[piece]
+                if piece.isupper():
+                    board_canvas.create_text(
+                        event.x + 1, event.y + 2, text=glyph, fill="#373737",
+                        font=("Segoe UI Symbol", piece_font_size, "bold"),
+                        tags=("piece-drag-preview", "piece-drag-shadow"),
+                    )
+                    board_canvas.create_text(
+                        event.x, event.y, text=glyph, fill="#fffdf8",
+                        font=("Segoe UI Symbol", piece_font_size, "bold"),
+                        tags=("piece-drag-preview", "piece-drag-main"),
+                    )
+                else:
+                    board_canvas.create_text(
+                        event.x, event.y, text=glyph, fill="#202027",
+                        font=("Segoe UI Symbol", piece_font_size, "bold"),
+                        tags=("piece-drag-preview", "piece-drag-main"),
+                    )
+            else:
+                board_canvas.coords("piece-drag-shadow", event.x + 1, event.y + 2)
+                board_canvas.coords("piece-drag-main", event.x, event.y)
+
+        def finish_piece_move(event):
+            source = move_gesture["source"]
+            was_dragging = move_gesture["dragging"]
+            click_move_from = move_gesture["click_move_from"]
+            click_destination = move_gesture["click_destination"]
+            board_canvas.delete("piece-drag-preview")
+            move_gesture.update(
+                source=None, start=None, dragging=False,
+                click_move_from=None, click_destination=None,
+            )
+            if was_dragging and source is not None:
+                if not move_piece(source, square_at_event(event)):
+                    draw_recognized_board()
+            elif click_move_from is not None and click_destination is not None:
+                move_piece(click_move_from, click_destination)
+            return "break"
+
+        def choose_square_piece(event):
+            position = square_at_event(event)
+            if position is None:
+                return "break"
+            row, col = position
+            selected_square["position"] = position
             draw_recognized_board()
             show_piece_picker(event, row, col)
             return "break"
 
         def castling_changed(right):
             manually_set_castling.add(right)
+            record_position_edit()
             draw_recognized_board()
 
         def set_board_orientation():
@@ -6272,12 +8640,16 @@ class ChessSnip:
             draw_board_coordinates()
             refresh_fen_display()
 
-        board_canvas.bind("<Button-1>", choose_square_piece)
+        board_canvas.configure(cursor="hand2")
+        board_canvas.bind("<ButtonPress-1>", start_piece_move)
+        board_canvas.bind("<B1-Motion>", drag_piece_move)
+        board_canvas.bind("<ButtonRelease-1>", finish_piece_move)
         board_canvas.bind("<Button-3>", choose_square_piece)
         draw_recognized_board()
 
         def flip_board():
             source_view["pieces_flipped"] = not source_view["pieces_flipped"]
+            board_flip_view["labels_flipped"] = not board_flip_view["labels_flipped"]
             draw_recognized_board()
 
         def flip_from_key(event=None):
@@ -6289,9 +8661,150 @@ class ChessSnip:
 
         window.bind_class(review_key_tag, "<KeyPress>", flip_from_key)
         bind_review_key_scope(window)
-        flip_button = tk.Button(right_header, text="Flip board", command=flip_board, bg=PANEL2, fg=TEXT, activebackground=EDGE, activeforeground=TEXT, relief="flat", bd=0, padx=9, pady=4, cursor="hand2")
+        undo_position_button = tk.Button(
+            board_edit_controls, text="↶", command=undo_position_edit,
+            bg=PANEL2, fg=MUTED, activebackground=EDGE, activeforeground=TEXT,
+            relief="flat", bd=0, padx=6, pady=4,
+            cursor="hand2", font=("Segoe UI", 11), takefocus=0,
+            state=tk.NORMAL,
+        )
+        undo_position_button.pack(side="left", padx=(0, 3))
+        position_history_buttons["undo"] = undo_position_button
+        self._add_tooltip(undo_position_button, "Undo the last board edit")
+        redo_position_button = tk.Button(
+            board_edit_controls, text="↷", command=redo_position_edit,
+            bg=PANEL2, fg=MUTED, activebackground=EDGE, activeforeground=TEXT,
+            relief="flat", bd=0, padx=6, pady=4,
+            cursor="hand2", font=("Segoe UI", 11), takefocus=0,
+            state=tk.NORMAL,
+        )
+        redo_position_button.pack(side="left", padx=(0, 3))
+        position_history_buttons["redo"] = redo_position_button
+        self._add_tooltip(redo_position_button, "Redo the last undone board edit")
+        reset_position_button = tk.Button(
+            board_edit_controls, command=reset_position,
+            bg=INK, fg=MUTED, activebackground=INK, activeforeground=MUTED,
+            relief="flat", bd=0, padx=4, pady=3, cursor="hand2", takefocus=0,
+            state=tk.NORMAL,
+        )
+        def create_reset_position_icon(color):
+            key = str(color).lower()
+            if key in reset_position_icons:
+                return reset_position_icons[key]
+            scale, size = 4, 20
+            bitmap = Image.new("RGBA", (size * scale, size * scale), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(bitmap)
+            draw.arc(
+                (3 * scale, 3 * scale, 17 * scale, 17 * scale),
+                start=45, end=325, fill=color, width=2 * scale,
+            )
+            draw.polygon(
+                [(13 * scale, 2 * scale), (18 * scale, 4 * scale), (14 * scale, 8 * scale)],
+                fill=color,
+            )
+            photo = ImageTk.PhotoImage(
+                bitmap.resize((size, size), Image.Resampling.LANCZOS), master=window,
+            )
+            reset_position_icons[key] = photo
+            reset_position_icon_art[key] = bitmap
+            return photo
+
+        def set_reset_position_button_icon(color):
+            key = str(color).lower()
+            photo = create_reset_position_icon(color)
+            reset_position_button._chesssnip_inline_icon_art = {
+                str(photo): (reset_position_icon_art[key], (20, 20)),
+            }
+            reset_position_button.configure(image=photo)
+            reset_position_button._reset_position_icon = photo
+
+        def refresh_reset_position_icon():
+            color = (
+                MUTED if getattr(reset_position_button, "_position_action_available", False)
+                else EDGE
+            )
+            set_reset_position_button_icon(color)
+
+        reset_position_button._chesssnip_theme_refresh = refresh_reset_position_icon
+        reset_position_button._chesssnip_custom_hover = True
+        reset_position_button.pack(side="left", padx=(0, 3))
+        position_history_buttons["reset"] = reset_position_button
+        self._add_tooltip(reset_position_button, "Restore the recognized piece layout")
+        update_position_history_buttons()
+
+        def create_flip_board_icon(color):
+            key = str(color).lower()
+            if key in flip_board_icons:
+                return flip_board_icons[key]
+            scale, size = 5, 22
+            bitmap = Image.new("RGBA", (size * scale, size * scale), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(bitmap)
+            width = 2 * scale
+            # Two opposing rounded paths suggest rotating the board without
+            # relying on a font glyph that may render differently per system.
+            draw.line(
+                [(5*scale, 9*scale), (5*scale, 6*scale), (8*scale, 3*scale),
+                 (16*scale, 3*scale), (19*scale, 6*scale)],
+                fill=color, width=width, joint="curve",
+            )
+            draw.polygon(
+                [(16*scale, 5*scale), (20*scale, 6*scale), (19*scale, 2*scale)],
+                fill=color,
+            )
+            draw.line(
+                [(17*scale, 13*scale), (17*scale, 16*scale), (14*scale, 19*scale),
+                 (6*scale, 19*scale), (3*scale, 16*scale)],
+                fill=color, width=width, joint="curve",
+            )
+            draw.polygon(
+                [(6*scale, 17*scale), (2*scale, 16*scale), (3*scale, 20*scale)],
+                fill=color,
+            )
+            photo = ImageTk.PhotoImage(
+                bitmap.resize((size, size), Image.Resampling.LANCZOS), master=window,
+            )
+            flip_board_icons[key] = photo
+            flip_board_icon_art[key] = bitmap
+            return photo
+
+        flip_button = tk.Button(
+            right_header, command=flip_board, bg=PANEL2, fg=TEXT,
+            activebackground=EDGE, activeforeground=TEXT, relief="flat", bd=0,
+            padx=5, pady=3, cursor="hand2", takefocus=0,
+        )
+        flip_board_icons = {}
+        flip_board_icon_art = {}
+        def refresh_flip_board_icon():
+            photo = create_flip_board_icon(MUTED)
+            color_key = str(MUTED).lower()
+            flip_button._chesssnip_inline_icon_art = {
+                str(photo): (flip_board_icon_art[color_key], (22, 22)),
+            }
+            flip_button.configure(image=photo)
+            flip_button._flip_board_icon = photo
+
+        flip_button._chesssnip_theme_refresh = refresh_flip_board_icon
+        refresh_flip_board_icon()
         flip_button.pack(side="right")
-        self._add_tooltip(flip_button, "Rotate the recognized pieces without changing the coordinate labels · shortcut: F")
+        self._add_tooltip(flip_button, "Flip board")
+
+        def block_unavailable_history_action(event, button):
+            if not getattr(button, "_position_action_available", False):
+                return "break"
+
+        for history_button in (undo_position_button, redo_position_button, reset_position_button):
+            history_button._position_action_available = False
+            history_button._chesssnip_custom_hover = True
+            history_button.bind(
+                "<ButtonPress-1>",
+                lambda event, button=history_button: block_unavailable_history_action(event, button),
+                add="+",
+            )
+            history_button.bind(
+                "<ButtonRelease-1>",
+                lambda event, button=history_button: block_unavailable_history_action(event, button),
+                add="+",
+            )
         orientation_controls = tk.Frame(right, bg=INK)
         orientation_controls.pack(fill="x", pady=(5, 0))
         tk.Label(orientation_controls, text="Board position", bg=INK, fg=MUTED, font=("Segoe UI", 8, "bold")).pack(side="left", padx=(coordinate_margin, 8))
@@ -6300,17 +8813,41 @@ class ChessSnip:
         orientation_label = tk.StringVar(value="Normal" if coordinate_orientation.get() == "white" else "Flipped")
         tk.Label(orientation_controls, textvariable=orientation_label, bg=INK, fg=TEXT, font=("Segoe UI", 9, "bold"), width=7, anchor="w").pack(side="left")
 
+        def render_review_toggle(canvas, enabled):
+            scale = 5
+            toggle_width = max(50, canvas.winfo_reqwidth())
+            toggle_height = max(28, canvas.winfo_reqheight())
+            red, green, blue = canvas.winfo_rgb(canvas.cget("bg"))
+            background = (red >> 8, green >> 8, blue >> 8, 255)
+            bitmap = Image.new(
+                "RGBA", (toggle_width * scale, toggle_height * scale), background,
+            )
+            draw = ImageDraw.Draw(bitmap)
+            track_color = ACCENT if enabled else PANEL2
+            draw.rounded_rectangle(
+                (scale, 2 * scale, (toggle_width - 1) * scale, (toggle_height - 2) * scale),
+                radius=12 * scale, fill=track_color,
+            )
+            thumb_x = toggle_width - 24 if enabled else 4
+            draw.ellipse(
+                (thumb_x * scale, 4 * scale,
+                 (thumb_x + 20) * scale, 24 * scale),
+                fill="#ffffff", outline=EDGE, width=scale,
+            )
+            photo = ImageTk.PhotoImage(
+                bitmap.resize((toggle_width, toggle_height), Image.Resampling.LANCZOS),
+                master=window,
+            )
+            canvas.delete("all")
+            canvas.create_image(0, 0, image=photo, anchor="nw", tags=("toggle-art",))
+            canvas._review_toggle_photo = photo
+
         def redraw_orientation_switch():
-            orientation_switch.delete("all")
             flipped = coordinate_orientation.get() == "black"
-            track_color = ACCENT if flipped else PANEL2
-            # Build a pill-shaped track and a contrasting sliding thumb.
-            orientation_switch.create_oval(1, 2, 25, 26, fill=track_color, outline=track_color)
-            orientation_switch.create_oval(25, 2, 49, 26, fill=track_color, outline=track_color)
-            orientation_switch.create_rectangle(13, 2, 37, 26, fill=track_color, outline=track_color)
-            thumb_x = 26 if flipped else 4
-            orientation_switch.create_oval(thumb_x, 4, thumb_x + 20, 24, fill="#ffffff", outline=EDGE, width=1)
+            render_review_toggle(orientation_switch, flipped)
             orientation_label.set("Flipped" if flipped else "Normal")
+
+        orientation_switch._chesssnip_theme_refresh = redraw_orientation_switch
 
         def toggle_orientation_switch(_event=None):
             coordinate_orientation.set("white" if coordinate_orientation.get() == "black" else "black")
@@ -6321,7 +8858,7 @@ class ChessSnip:
         orientation_switch.bind("<Button-1>", toggle_orientation_switch)
         orientation_switch.bind("<space>", toggle_orientation_switch)
         orientation_switch.bind("<Return>", toggle_orientation_switch)
-        self._add_tooltip(orientation_switch, "Toggle board coordinates: Normal uses rank 1 at the bottom (a–h); Flipped uses rank 8 at the bottom (h–a)")
+        self._add_tooltip(orientation_switch, "Flip coordinate labels and update the FEN · Flip board also rotates pieces and labels together")
         redraw_orientation_switch()
 
         options = tk.Frame(window, bg=PANEL, padx=12, pady=9)
@@ -6333,15 +8870,11 @@ class ChessSnip:
         tk.Label(options, textvariable=turn_label, bg=PANEL, fg=TEXT, font=("Segoe UI", 9, "bold"), width=15, anchor="w").grid(row=0, column=2, sticky="w", padx=(0, 16))
 
         def redraw_turn_switch():
-            turn_switch.delete("all")
             black_to_move = turn.get() == "b"
-            track_color = ACCENT if black_to_move else PANEL2
-            turn_switch.create_oval(1, 2, 25, 26, fill=track_color, outline=track_color)
-            turn_switch.create_oval(25, 2, 49, 26, fill=track_color, outline=track_color)
-            turn_switch.create_rectangle(13, 2, 37, 26, fill=track_color, outline=track_color)
-            thumb_x = 26 if black_to_move else 4
-            turn_switch.create_oval(thumb_x, 4, thumb_x + 20, 24, fill="#ffffff", outline=EDGE, width=1)
+            render_review_toggle(turn_switch, black_to_move)
             turn_label.set("Black to move" if black_to_move else "White to move")
+
+        turn_switch._chesssnip_theme_refresh = redraw_turn_switch
 
         def toggle_turn_switch(_event=None):
             turn.set("w" if turn.get() == "b" else "b")
@@ -6433,6 +8966,8 @@ class ChessSnip:
 
         fen_copy_button = tk.Button(fen_row, text="Copy", command=copy_fen, bg=PANEL2, fg=TEXT, activebackground=EDGE, activeforeground=TEXT, relief="flat", bd=0, padx=14, cursor="hand2")
         fen_copy_button.pack(side="left", padx=(8, 0), ipady=4)
+        # Avoid freezing a transient full-row height into the button's image.
+        fen_copy_button._chesssnip_aa_fixed_size = (68, 36)
         self._add_tooltip(fen_copy_button, "Copy the FEN to the clipboard")
         button_row = tk.Frame(window, bg=INK)
         button_row.pack(fill="x", padx=24, pady=(16, 22))
@@ -6491,6 +9026,7 @@ class ChessSnip:
                 logo_tinted = Image.new("RGBA", logo_rgba.size, TEXT)
                 logo_tinted.putalpha(logo_rgba.getchannel("A"))
                 lichess_logo = ImageTk.PhotoImage(logo_tinted, master=window)
+                self._register_button_icon(lichess_logo, logo_tinted, logo_rgba.size)
         except (OSError, tk.TclError):
             pass
         lichess_button = tk.Button(button_row, text="Open in Lichess", image=lichess_logo, compound="left", command=open_in_lichess, bg=PANEL2, fg=TEXT, activebackground=EDGE, activeforeground=TEXT, relief="flat", bd=0, padx=16, pady=10, cursor="hand2")
@@ -6561,29 +9097,12 @@ class ChessSnip:
         if self._rotation_drag:
             return
         self._pointer_canvas_pos=(self.canvas.canvasx(e.x),self.canvas.canvasy(e.y))
-        if self.tool.get() == "crop" and self._crop_box:
-            left, top, right, bottom = self._crop_box
-            ox, oy = self.display_origin
-            scale = self.fit_scale
-            cx, cy = self._pointer_canvas_pos
-            corners = (
-                (ox + left * scale, oy + top * scale, "size_nw_se"),
-                (ox + right * scale, oy + top * scale, "size_ne_sw"),
-                (ox + right * scale, oy + bottom * scale, "size_nw_se"),
-                (ox + left * scale, oy + bottom * scale, "size_ne_sw"),
-            )
-            nearest = min(corners, key=lambda corner: (cx-corner[0])**2 + (cy-corner[1])**2)
-            if (cx-nearest[0])**2 + (cy-nearest[1])**2 <= 14**2:
-                cursor = nearest[2]
-            else:
-                image_x, image_y = self._to_image(e.x, e.y)
-                cursor = "fleur" if left <= image_x <= right and top <= image_y <= bottom else "crosshair"
-            try:
-                self.canvas.configure(cursor=cursor)
-            except tk.TclError:
-                self.canvas.configure(cursor="crosshair")
         self._update_recognition_qr_tooltip(e)
         self._update_brush_cursor()
+        if self.tool.get() == "crop":
+            self._set_crop_cursor(e)
+        elif not self._drawing and not self._shape_transform_drag:
+            self._set_shape_selection_cursor(e)
         if self.image and self.tool.get()!="crop":
             x,y=self._to_image(e.x,e.y)
             if 0<=x<self.image.width and 0<=y<self.image.height:self.status.set(f"{self.image.width} × {self.image.height} px   ·   {int(x)}, {int(y)}")

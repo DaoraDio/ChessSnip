@@ -1,15 +1,11 @@
 Third-party software and model notices
 ======================================
 
-Offline OCR and QR reading
+Offline text and QR reading
 --------------------------
-The FastStart distribution and source installation use RapidOCR for offline
-text detection and recognition. Its PP-OCRv6 model artifacts are covered by
-RapidOCR_MODEL_LICENSES.md. RapidOCR source code is licensed under Apache
-License 2.0; the license text is included in Apache-2.0-LICENSE.txt.
-
-The single-file distribution uses Windows.Media.Ocr, the on-device OCR API
-included with Windows. ChessSnip does not upload snips for recognition.
+Text recognition uses Windows.Media.Ocr, the on-device OCR API included with
+Windows. It makes one OCR pass and uses the language resources installed for
+the current Windows user; ChessSnip does not bundle OCR models or upload snips.
 
 The Python projection for the Windows Runtime APIs is PyWinRT, distributed
 under the MIT License in PyWinRT_LICENSE.txt.

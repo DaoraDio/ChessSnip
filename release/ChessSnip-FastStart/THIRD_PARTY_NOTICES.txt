@@ -1,11 +1,11 @@
 Third-party software and model notices
 ======================================
 
-Offline OCR and QR reading
+Offline text and QR reading
 --------------------------
-Text extraction uses Windows.Media.Ocr, the on-device OCR API included with
-Windows. OCR uses the language resources installed for the current Windows
-user; ChessSnip does not bundle OCR models or upload snips.
+Text recognition uses Windows.Media.Ocr, the on-device OCR API included with
+Windows. It makes one OCR pass and uses the language resources installed for
+the current Windows user; ChessSnip does not bundle OCR models or upload snips.
 
 The Python projection for the Windows Runtime APIs is PyWinRT, distributed
 under the MIT License in PyWinRT_LICENSE.txt.
@@ -48,5 +48,13 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Lichess logo
+------------
+The Lichess logo artwork in assets/lichess/ is by sadsnake1. It is used only
+on the button that opens lichess.org, consistent with the Lichess project's
+logo-use exception. Source and usage terms:
+https://lichess1.org/assets/logo/lichess-pad12.svg
+https://github.com/lichess-org/lila/blob/master/COPYING.md
 
 

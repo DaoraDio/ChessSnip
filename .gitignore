@@ -17,6 +17,11 @@ dist/
 *.log
 settings.json
 
+# Local-only app copies and shortcuts; official builds are named ChessSnip.exe.
+/ChessSnip.exe
+/release/**/*.lnk
+/release/ChessSnip-FastStart/ChessSnip-*.exe
+
 # Stale files from an earlier RapidOCR release build (the current builds use Windows OCR).
 Apache-2.0-LICENSE.txt
 RapidOCR_MODEL_LICENSES.md

@@ -1,10 +1,10 @@
 ChessSnip FastStart
 ===================
 
-Run ChessSnip.exe and keep the _internal folder beside it. This folder includes
-RapidOCR and its offline models for improved recognition of varied fonts. They
-load only when you click the text-and-QR scan icon in the top toolbar. The scan
-recognizes both types together and highlights the detected areas. No Python
+Run ChessSnip.exe and keep the _internal folder beside it. Text recognition
+uses Windows' built-in OCR API and the language resources installed for the
+current Windows user; no OCR models are bundled. The toolbar scan icon
+recognizes text and QR codes together and highlights detected areas. No Python
 installation or internet connection is needed.
 
 To start directly in capture mode, run ChessSnip.exe --snip.

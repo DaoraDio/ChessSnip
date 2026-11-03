@@ -14,7 +14,7 @@ ChessSnip is a Windows Snipping Tool clone with its most-used capture and editin
 - Recognize a chessboard locally and review the detected pieces, board orientation, side to move, and castling rights before exporting PGN.
 - Optionally open the position in Lichess.
 
-Text recognition uses a bundled RapidOCR engine in the FastStart build and when running from source, with Windows OCR as a fallback. The OCR models load only when you click the text-and-QR scan icon in the toolbar, keeping normal startup quick. The single-file build uses Windows' installed OCR language resources. Text, QR-code, and chess recognition run locally; screenshots are not uploaded for recognition.
+Text recognition uses a single pass of Windows' built-in Windows.Media.Ocr API in both builds and when running from source. It uses OCR language resources installed in Windows; no OCR models are bundled. QR-code and chess recognition also run locally. Screenshots are not uploaded for recognition.
 
 ## Ready-to-run Windows builds (no Python needed)
 
@@ -68,7 +68,6 @@ PyInstaller writes generated files under build/ and dist/. The single-file build
 - ChessSnip.png and ChessSnip.ico — application icons.
 - ChessSnip.spec and ChessSnipFast.spec — portable PyInstaller build definitions.
 - PyWinRT_LICENSE.txt and ZXing_CPP_LICENSE.txt — license notices for the bundled Windows Runtime bindings and QR-reading library.
-- RapidOCR_LICENSE.txt, RapidOCR_MODEL_LICENSES.md, and Apache-2.0-LICENSE.txt — license notices for the bundled OCR engine and models.
 - THIRD_PARTY_NOTICES.txt — attribution and license notice for the bundled chess model and adapted algorithm.
 - release/ — prebuilt, ready-to-run Windows distributions that do not require Python to be installed.
 

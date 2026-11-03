@@ -39,10 +39,16 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # Keep the large optional OCR engine out of the compact single-file build.
+    # OCR uses Windows.Media.Ocr; keep any locally installed RapidOCR package out.
     excludes=["rapidocr"],
     noarchive=False,
     optimize=0,
+)
+# PyInstaller's dependency scan can re-add the WinRT wheel's older MSVC runtime.
+from PyInstaller.building.datastruct import TOC
+a.binaries = TOC(
+    entry for entry in a.binaries
+    if entry[0].replace('\\', '/').casefold() != 'winrt/msvcp140.dll'
 )
 pyz = PYZ(a.pure)
 
